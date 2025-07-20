@@ -4,7 +4,8 @@ on:
   push:
   pull_request:
     branches: [ "main" ]
-
+  workflow_dispatch:
+  
 env:
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
