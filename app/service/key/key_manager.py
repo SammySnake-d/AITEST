@@ -37,16 +37,18 @@ class KeyManager:
         self.key_state_lock = asyncio.Lock()  # 密钥状态锁
         self.vertex_key_state_lock = asyncio.Lock()  # Vertex密钥状态锁
 
-        # 预检机制
+        # 预检机制（简化配置）
         self.precheck_enabled = settings.KEY_PRECHECK_ENABLED
         self.precheck_count = settings.KEY_PRECHECK_COUNT
         self.precheck_trigger_ratio = settings.KEY_PRECHECK_TRIGGER_RATIO
-        self.precheck_min_keys_multiplier = settings.KEY_PRECHECK_MIN_KEYS_MULTIPLIER
-        self.precheck_estimated_concurrent = settings.KEY_PRECHECK_ESTIMATED_CONCURRENT_REQUESTS
-        self.precheck_dynamic_adjustment = settings.KEY_PRECHECK_DYNAMIC_ADJUSTMENT
-        self.precheck_safety_buffer_ratio = settings.KEY_PRECHECK_SAFETY_BUFFER_RATIO
-        self.precheck_min_reserve_ratio = settings.KEY_PRECHECK_MIN_RESERVE_RATIO
         self.precheck_lock = asyncio.Lock()  # 预检锁
+
+        # 固定的内部参数（不再通过配置暴露）
+        self.precheck_min_keys_multiplier = 5  # 密钥数量必须是并发数的5倍才启用预检
+        self.precheck_estimated_concurrent = 20  # 估计的每秒并发请求数
+        self.precheck_dynamic_adjustment = True  # 启用动态调整
+        self.precheck_safety_buffer_ratio = 1.5  # 安全缓冲比例
+        self.precheck_min_reserve_ratio = 0.3  # 最小保留比例
 
         # 预检状态跟踪（基于有效密钥比例）
         self.precheck_current_batch_size = 0  # 当前批次的预检数量
@@ -901,11 +903,8 @@ class KeyManager:
             logger.debug(f"Key validation error: {redact_key_for_logging(key)}, error: {e}")
             return False
 
-    def update_precheck_config(self, enabled: bool = None, count: int = None, trigger_ratio: float = None,
-                              min_keys_multiplier: int = None, estimated_concurrent: int = None,
-                              dynamic_adjustment: bool = None, safety_buffer_ratio: float = None,
-                              min_reserve_ratio: float = None):
-        """更新预检配置"""
+    def update_precheck_config(self, enabled: bool = None, count: int = None, trigger_ratio: float = None):
+        """更新预检配置（简化版本，只支持核心参数）"""
         config_changed = False
 
         if enabled is not None and enabled != self.precheck_enabled:
@@ -913,31 +912,11 @@ class KeyManager:
             config_changed = True
 
         if count is not None and count != self.precheck_count:
-            self.precheck_count = max(0, count)  # 最小为0（禁用预检）
+            self.precheck_count = max(10, count)  # 最小为10
             config_changed = True
 
         if trigger_ratio is not None and trigger_ratio != self.precheck_trigger_ratio:
             self.precheck_trigger_ratio = max(0.1, min(1.0, trigger_ratio))  # 限制在0.1-1.0之间
-            config_changed = True
-
-        if min_keys_multiplier is not None and min_keys_multiplier != self.precheck_min_keys_multiplier:
-            self.precheck_min_keys_multiplier = max(1, min_keys_multiplier)
-            config_changed = True
-
-        if estimated_concurrent is not None and estimated_concurrent != self.precheck_estimated_concurrent:
-            self.precheck_estimated_concurrent = max(1, estimated_concurrent)
-            config_changed = True
-
-        if dynamic_adjustment is not None and dynamic_adjustment != self.precheck_dynamic_adjustment:
-            self.precheck_dynamic_adjustment = dynamic_adjustment
-            config_changed = True
-
-        if safety_buffer_ratio is not None and safety_buffer_ratio != self.precheck_safety_buffer_ratio:
-            self.precheck_safety_buffer_ratio = max(1.0, safety_buffer_ratio)
-            config_changed = True
-
-        if min_reserve_ratio is not None and min_reserve_ratio != self.precheck_min_reserve_ratio:
-            self.precheck_min_reserve_ratio = max(0.1, min(0.9, min_reserve_ratio))
             config_changed = True
 
         if config_changed:

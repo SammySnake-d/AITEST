@@ -30,7 +30,15 @@ async def test_precheck_mechanism():
     key_manager = KeyManager(test_keys, [])
     
     print(f"📋 创建了包含 {len(test_keys)} 个测试密钥的KeyManager")
-    print(f"⚙️  预检配置: 启用={key_manager.precheck_enabled}, 数量={key_manager.precheck_count}, 触发比例={key_manager.precheck_trigger_ratio}, 动态调整={key_manager.precheck_dynamic_adjustment}")
+    print(f"⚙️  预检配置:")
+    print(f"    启用: {key_manager.precheck_enabled}")
+    print(f"    数量: {key_manager.precheck_count}")
+    print(f"    触发比例: {key_manager.precheck_trigger_ratio}")
+    print(f"    动态调整: {key_manager.precheck_dynamic_adjustment}")
+    print(f"    安全缓冲比例: {key_manager.precheck_safety_buffer_ratio}")
+    print(f"    最小保留比例: {key_manager.precheck_min_reserve_ratio}")
+    print(f"    密钥倍数: {key_manager.precheck_min_keys_multiplier}")
+    print(f"    估计并发: {key_manager.precheck_estimated_concurrent}")
     
     # 测试获取下一个密钥
     print("\n🔄 测试密钥轮询...")
@@ -45,9 +53,9 @@ async def test_precheck_mechanism():
     for i, key in enumerate(precheck_keys):
         print(f"    {i+1}. {key[:20]}...")
 
-    # 测试预检配置更新
+    # 测试预检配置更新（简化版本）
     print("\n⚙️  测试预检配置更新...")
-    key_manager.update_precheck_config(enabled=True, count=5, trigger_ratio=0.5)
+    key_manager.update_precheck_config(enabled=True, count=50, trigger_ratio=0.5)
     print(f"  更新后配置: 启用={key_manager.precheck_enabled}, 数量={key_manager.precheck_count}, 触发比例={key_manager.precheck_trigger_ratio}")
 
     # 模拟密钥使用以触发预检

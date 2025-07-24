@@ -570,27 +570,24 @@ async def get_keys_paginated(
         return JSONResponse({"success": False, "message": f"获取密钥列表失败: {str(e)}"}, status_code=500)
 
 
-# 预检配置相关模型
+# 预检配置相关模型（简化版本）
 class KeyPrecheckConfigRequest(BaseModel):
     enabled: Optional[bool] = None
     count: Optional[int] = None
     trigger_ratio: Optional[float] = None
-    min_keys_multiplier: Optional[int] = None
-    estimated_concurrent: Optional[int] = None
-    dynamic_adjustment: Optional[bool] = None
-    safety_buffer_ratio: Optional[float] = None
-    min_reserve_ratio: Optional[float] = None
 
 
 class KeyPrecheckConfigResponse(BaseModel):
     enabled: bool
     count: int
     trigger_ratio: float
+    # 内部固定参数（不通过API暴露）
     min_keys_multiplier: int
     estimated_concurrent: int
     dynamic_adjustment: bool
     safety_buffer_ratio: float
     min_reserve_ratio: float
+    # 状态信息
     min_keys_required: int
     current_keys_count: int
     last_minute_calls: int
@@ -652,35 +649,18 @@ async def update_precheck_config(
     logger.info("-" * 50 + "update_precheck_config" + "-" * 50)
 
     try:
-        # 验证参数
-        if request.count is not None and request.count < 0:
-            return JSONResponse({"success": False, "message": "预检密钥数量不能小于0"}, status_code=400)
+        # 验证参数（简化版本）
+        if request.count is not None and (request.count < 10 or request.count > 1000):
+            return JSONResponse({"success": False, "message": "预检数量必须在10-1000之间"}, status_code=400)
 
         if request.trigger_ratio is not None and (request.trigger_ratio < 0.1 or request.trigger_ratio > 1.0):
             return JSONResponse({"success": False, "message": "触发比例必须在0.1-1.0之间"}, status_code=400)
 
-        if request.min_keys_multiplier is not None and request.min_keys_multiplier < 1:
-            return JSONResponse({"success": False, "message": "密钥倍数必须大于等于1"}, status_code=400)
-
-        if request.estimated_concurrent is not None and request.estimated_concurrent < 1:
-            return JSONResponse({"success": False, "message": "估计并发数必须大于等于1"}, status_code=400)
-
-        if request.safety_buffer_ratio is not None and request.safety_buffer_ratio < 1.0:
-            return JSONResponse({"success": False, "message": "安全缓冲比例必须大于等于1.0"}, status_code=400)
-
-        if request.min_reserve_ratio is not None and (request.min_reserve_ratio < 0.1 or request.min_reserve_ratio > 0.9):
-            return JSONResponse({"success": False, "message": "最小保留比例必须在0.1-0.9之间"}, status_code=400)
-
-        # 更新配置
+        # 更新配置（只更新核心参数）
         key_manager.update_precheck_config(
             enabled=request.enabled,
             count=request.count,
-            trigger_ratio=request.trigger_ratio,
-            min_keys_multiplier=request.min_keys_multiplier,
-            estimated_concurrent=request.estimated_concurrent,
-            dynamic_adjustment=request.dynamic_adjustment,
-            safety_buffer_ratio=request.safety_buffer_ratio,
-            min_reserve_ratio=request.min_reserve_ratio
+            trigger_ratio=request.trigger_ratio
         )
 
         # 同时更新全局settings

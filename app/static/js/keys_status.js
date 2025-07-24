@@ -1172,6 +1172,32 @@ let disabledCurrentPage = 1;
 let currentSearch = "";
 let currentFailCountThreshold = 0;
 
+// 分页大小变更处理函数
+function handleItemsPerPageChange(event) {
+  const newItemsPerPage = parseInt(event.target.value, 10);
+  console.log(`分页大小变更: ${itemsPerPage} -> ${newItemsPerPage}`);
+
+  if (newItemsPerPage !== itemsPerPage) {
+    itemsPerPage = newItemsPerPage;
+
+    // 清除缓存并重新加载所有类型的第一页
+    paginationCache = {
+      valid: { page: 0, data: null, search: "", threshold: 0, itemsPerPage: 0 },
+      invalid: { page: 0, data: null, search: "", itemsPerPage: 0 },
+      disabled: { page: 0, data: null, search: "", itemsPerPage: 0 }
+    };
+
+    console.log(`开始重新加载页面，新的分页大小: ${itemsPerPage}`);
+
+    // 重新加载所有页面
+    displayPageBackend("valid", 1);
+    displayPageBackend("invalid", 1);
+    displayPageBackend("disabled", 1);
+
+    showNotification(`每页显示数量已更改为 ${itemsPerPage}`, 'success', 2000);
+  }
+}
+
 // Cache for pagination data to avoid unnecessary API calls
 let paginationCache = {
   valid: { page: 0, data: null, search: "", threshold: 0, itemsPerPage: 0 },
@@ -1492,18 +1518,20 @@ function initializeKeyPaginationAndSearch() {
   // 初始化每页显示数量
   if (itemsPerPageSelect) {
     itemsPerPage = parseInt(itemsPerPageSelect.value, 10);
-    itemsPerPageSelect.addEventListener("change", () => {
-      itemsPerPage = parseInt(itemsPerPageSelect.value, 10);
-      // 清除缓存并重新加载所有类型的第一页
-      paginationCache = {
-        valid: { page: 0, data: null, search: "", threshold: 0, itemsPerPage: 0 },
-        invalid: { page: 0, data: null, search: "", itemsPerPage: 0 },
-        disabled: { page: 0, data: null, search: "", itemsPerPage: 0 }
-      };
-      displayPageBackend("valid", 1);
-      displayPageBackend("invalid", 1);
-      displayPageBackend("disabled", 1);
-    });
+    console.log(`初始化分页大小: ${itemsPerPage}`);
+
+    // 移除可能存在的旧事件监听器
+    itemsPerPageSelect.removeEventListener("change", handleItemsPerPageChange);
+
+    // 添加新的事件监听器
+    itemsPerPageSelect.addEventListener("change", handleItemsPerPageChange);
+
+    // 同时添加input事件作为备用
+    itemsPerPageSelect.addEventListener("input", handleItemsPerPageChange);
+
+    console.log(`分页大小选择器事件监听器已绑定`);
+  } else {
+    console.error("未找到itemsPerPageSelect元素");
   }
 
   // 搜索输入事件监听
@@ -1555,6 +1583,14 @@ function registerServiceWorker() {
   }
 }
 
+// 添加全局事件委托来处理分页大小变更
+document.addEventListener("change", (event) => {
+  if (event.target && event.target.id === "itemsPerPageSelect") {
+    console.log("通过事件委托检测到分页大小变更");
+    handleItemsPerPageChange(event);
+  }
+});
+
 // 初始化
 document.addEventListener("DOMContentLoaded", () => {
   initializePageAnimationsAndEffects();
@@ -1571,6 +1607,20 @@ document.addEventListener("DOMContentLoaded", () => {
   updateBatchActions('valid');
   updateBatchActions('invalid');
   updateBatchActions('disabled');
+
+  // 额外的分页大小选择器初始化检查
+  setTimeout(() => {
+    const itemsPerPageSelect = document.getElementById("itemsPerPageSelect");
+    if (itemsPerPageSelect) {
+      console.log(`页面加载完成后检查分页选择器，当前值: ${itemsPerPageSelect.value}`);
+      // 确保事件监听器已绑定
+      if (!itemsPerPageSelect.hasAttribute('data-listener-bound')) {
+        console.log("重新绑定分页大小选择器事件监听器");
+        itemsPerPageSelect.addEventListener("change", handleItemsPerPageChange);
+        itemsPerPageSelect.setAttribute('data-listener-bound', 'true');
+      }
+    }
+  }, 1000);
 });
 
 // --- 新增：删除密钥相关功能 ---
@@ -2041,15 +2091,14 @@ async function loadPrecheckConfig() {
     if (response && response.success) {
       const config = response.data;
 
-      // 更新UI
-      document.getElementById('precheckEnabled').checked = config.enabled;
-      document.getElementById('precheckCount').value = config.count;
-      document.getElementById('precheckTriggerRatio').value = config.trigger_ratio;
-      document.getElementById('precheckMinKeysMultiplier').value = config.min_keys_multiplier;
-      document.getElementById('precheckEstimatedConcurrent').value = config.estimated_concurrent;
-      document.getElementById('precheckDynamicAdjustment').checked = config.dynamic_adjustment;
-      document.getElementById('precheckSafetyBufferRatio').value = config.safety_buffer_ratio;
-      document.getElementById('precheckMinReserveRatio').value = config.min_reserve_ratio;
+      // 更新UI（简化版本，只处理核心配置）
+      const precheckEnabled = document.getElementById('precheckEnabled');
+      const precheckCount = document.getElementById('precheckCount');
+      const precheckTriggerRatio = document.getElementById('precheckTriggerRatio');
+
+      if (precheckEnabled) precheckEnabled.checked = config.enabled;
+      if (precheckCount) precheckCount.value = config.count;
+      if (precheckTriggerRatio) precheckTriggerRatio.value = config.trigger_ratio;
 
       // 更新状态显示
       updatePrecheckStatus(config.enabled);
@@ -2078,34 +2127,25 @@ async function savePrecheckConfig() {
     saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 保存中...';
     saveButton.disabled = true;
 
-    // 获取配置值
-    const enabled = document.getElementById('precheckEnabled').checked;
-    const count = parseInt(document.getElementById('precheckCount').value, 10);
-    const triggerRatio = parseFloat(document.getElementById('precheckTriggerRatio').value);
-    const minKeysMultiplier = parseInt(document.getElementById('precheckMinKeysMultiplier').value, 10);
-    const estimatedConcurrent = parseInt(document.getElementById('precheckEstimatedConcurrent').value, 10);
-    const dynamicAdjustment = document.getElementById('precheckDynamicAdjustment').checked;
-    const safetyBufferRatio = parseFloat(document.getElementById('precheckSafetyBufferRatio').value);
-    const minReserveRatio = parseFloat(document.getElementById('precheckMinReserveRatio').value);
+    // 获取配置值（简化版本）
+    const precheckEnabledEl = document.getElementById('precheckEnabled');
+    const precheckCountEl = document.getElementById('precheckCount');
+    const precheckTriggerRatioEl = document.getElementById('precheckTriggerRatio');
 
-    // 验证输入
-    if (count < 0 || count > 1000) {
-      throw new Error('预检数量必须在0-1000之间');
+    if (!precheckEnabledEl || !precheckCountEl || !precheckTriggerRatioEl) {
+      throw new Error('预检配置表单元素未找到');
+    }
+
+    const enabled = precheckEnabledEl.checked;
+    const count = parseInt(precheckCountEl.value, 10);
+    const triggerRatio = parseFloat(precheckTriggerRatioEl.value);
+
+    // 验证输入（简化版本）
+    if (count < 10 || count > 1000) {
+      throw new Error('预检数量必须在10-1000之间');
     }
     if (triggerRatio < 0.1 || triggerRatio > 1.0) {
       throw new Error('触发比例必须在0.1-1.0之间');
-    }
-    if (minKeysMultiplier < 1 || minKeysMultiplier > 20) {
-      throw new Error('密钥倍数必须在1-20之间');
-    }
-    if (estimatedConcurrent < 1 || estimatedConcurrent > 1000) {
-      throw new Error('估计并发数必须在1-1000之间');
-    }
-    if (safetyBufferRatio < 1.0 || safetyBufferRatio > 5.0) {
-      throw new Error('安全缓冲比例必须在1.0-5.0之间');
-    }
-    if (minReserveRatio < 0.1 || minReserveRatio > 0.9) {
-      throw new Error('最小保留比例必须在0.1-0.9之间');
     }
 
     // 发送请求
@@ -2117,12 +2157,7 @@ async function savePrecheckConfig() {
       body: JSON.stringify({
         enabled: enabled,
         count: count,
-        trigger_ratio: triggerRatio,
-        min_keys_multiplier: minKeysMultiplier,
-        estimated_concurrent: estimatedConcurrent,
-        dynamic_adjustment: dynamicAdjustment,
-        safety_buffer_ratio: safetyBufferRatio,
-        min_reserve_ratio: minReserveRatio
+        trigger_ratio: triggerRatio
       })
     });
 
@@ -2151,6 +2186,11 @@ async function savePrecheckConfig() {
  */
 function updatePrecheckStatus(enabled) {
   const statusElement = document.getElementById('precheckStatus');
+  if (!statusElement) {
+    console.warn('precheckStatus element not found, skipping status update');
+    return;
+  }
+
   if (enabled) {
     statusElement.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> 已启用';
     statusElement.className = 'text-sm font-medium px-2 py-1 rounded-full bg-green-100 text-green-700';
@@ -2165,6 +2205,11 @@ function updatePrecheckStatus(enabled) {
  */
 function updatePrecheckStatusInfo(config) {
   const statusInfoElement = document.getElementById('precheckStatusInfo');
+  if (!statusInfoElement) {
+    console.warn('precheckStatusInfo element not found, skipping status info update');
+    return;
+  }
+
   if (config.enabled) {
     const statusText = `需要${config.min_keys_required}个密钥，当前${config.current_keys_count}个`;
     if (config.current_keys_count >= config.min_keys_required) {
@@ -2240,6 +2285,7 @@ function updatePrecheckStatsInfo(config) {
 
 // 将函数暴露到全局作用域
 window.savePrecheckConfig = savePrecheckConfig;
+window.handleItemsPerPageChange = handleItemsPerPageChange;
 
 // --- Key List Display & Pagination ---
 

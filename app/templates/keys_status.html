@@ -1217,37 +1217,30 @@ endblock %} {% block head_extra_styles %}
         </div>
       </div>
       <div class="p-4 bg-white bg-opacity-40">
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
           <!-- 启用预检 -->
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-3">
             <label class="flex items-center cursor-pointer">
-              <input type="checkbox" id="precheckEnabled" class="form-checkbox h-4 w-4 text-green-600 border-gray-300 rounded focus:ring-green-500">
-              <span class="ml-2 text-sm font-medium text-gray-700">启用预检机制</span>
-            </label>
-          </div>
-          <!-- 动态调整 -->
-          <div class="flex items-center gap-2">
-            <label class="flex items-center cursor-pointer">
-              <input type="checkbox" id="precheckDynamicAdjustment" class="form-checkbox h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-              <span class="ml-2 text-sm font-medium text-gray-700">动态调整</span>
+              <input type="checkbox" id="precheckEnabled" class="form-checkbox h-5 w-5 text-green-600 border-gray-300 rounded focus:ring-green-500">
+              <span class="ml-3 text-base font-medium text-gray-700">启用预检机制</span>
             </label>
           </div>
           <!-- 预检数量 -->
-          <div class="flex items-center gap-2">
-            <label for="precheckCount" class="text-sm font-medium text-gray-700 whitespace-nowrap">预检数量:</label>
+          <div class="flex items-center gap-3">
+            <label for="precheckCount" class="text-base font-medium text-gray-700 whitespace-nowrap">预检数量:</label>
             <input
               type="number"
               id="precheckCount"
-              min="0"
+              min="10"
               max="1000"
               value="100"
-              class="form-input h-8 w-20 px-2 py-1 text-sm border rounded focus:ring-green-500 focus:border-green-500"
+              class="form-input h-10 w-24 px-3 py-2 text-base border rounded-lg focus:ring-green-500 focus:border-green-500"
             />
-            <span class="text-xs text-gray-500">个密钥</span>
+            <span class="text-sm text-gray-500">个密钥</span>
           </div>
           <!-- 触发比例 -->
-          <div class="flex items-center gap-2">
-            <label for="precheckTriggerRatio" class="text-sm font-medium text-gray-700 whitespace-nowrap">触发比例:</label>
+          <div class="flex items-center gap-3">
+            <label for="precheckTriggerRatio" class="text-base font-medium text-gray-700 whitespace-nowrap">触发比例:</label>
             <input
               type="number"
               id="precheckTriggerRatio"
@@ -1255,64 +1248,11 @@ endblock %} {% block head_extra_styles %}
               max="1.0"
               step="0.01"
               value="0.67"
-              class="form-input h-8 w-20 px-2 py-1 text-sm border rounded focus:ring-green-500 focus:border-green-500"
+              class="form-input h-10 w-24 px-3 py-2 text-base border rounded-lg focus:ring-green-500 focus:border-green-500"
             />
-            <span class="text-xs text-gray-500">(0.1-1.0)</span>
+            <span class="text-sm text-gray-500">(0.1-1.0)</span>
           </div>
-          <!-- 密钥倍数 -->
-          <div class="flex items-center gap-2">
-            <label for="precheckMinKeysMultiplier" class="text-sm font-medium text-gray-700 whitespace-nowrap">密钥倍数:</label>
-            <input
-              type="number"
-              id="precheckMinKeysMultiplier"
-              min="1"
-              max="20"
-              value="5"
-              class="form-input h-8 w-20 px-2 py-1 text-sm border rounded focus:ring-green-500 focus:border-green-500"
-            />
-            <span class="text-xs text-gray-500">倍</span>
-          </div>
-          <!-- 估计并发数 -->
-          <div class="flex items-center gap-2">
-            <label for="precheckEstimatedConcurrent" class="text-sm font-medium text-gray-700 whitespace-nowrap">估计并发:</label>
-            <input
-              type="number"
-              id="precheckEstimatedConcurrent"
-              min="1"
-              max="1000"
-              value="20"
-              class="form-input h-8 w-20 px-2 py-1 text-sm border rounded focus:ring-green-500 focus:border-green-500"
-            />
-            <span class="text-xs text-gray-500">请求/秒</span>
-          </div>
-          <!-- 安全缓冲比例 -->
-          <div class="flex items-center gap-2">
-            <label for="precheckSafetyBufferRatio" class="text-sm font-medium text-gray-700 whitespace-nowrap">安全缓冲:</label>
-            <input
-              type="number"
-              id="precheckSafetyBufferRatio"
-              min="1.0"
-              max="5.0"
-              step="0.1"
-              value="1.5"
-              class="form-input h-8 w-20 px-2 py-1 text-sm border rounded focus:ring-green-500 focus:border-green-500"
-            />
-            <span class="text-xs text-gray-500">倍</span>
-          </div>
-          <!-- 最小保留比例 -->
-          <div class="flex items-center gap-2">
-            <label for="precheckMinReserveRatio" class="text-sm font-medium text-gray-700 whitespace-nowrap">保留比例:</label>
-            <input
-              type="number"
-              id="precheckMinReserveRatio"
-              min="0.1"
-              max="0.9"
-              step="0.05"
-              value="0.3"
-              class="form-input h-8 w-20 px-2 py-1 text-sm border rounded focus:ring-green-500 focus:border-green-500"
-            />
-            <span class="text-xs text-gray-500">(0.1-0.9)</span>
-          </div>
+
         </div>
         <!-- 状态信息区域 -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-4 p-3 bg-gray-50 rounded-lg">
@@ -1346,16 +1286,15 @@ endblock %} {% block head_extra_styles %}
           <div class="text-sm font-medium text-gray-700 mb-2">当前批次有效密钥位置:</div>
           <div id="precheckValidKeysPositions" class="text-xs text-blue-700 font-mono">-</div>
         </div>
-        <div class="text-sm text-gray-600 mb-2">
+        <div class="text-sm text-gray-600 mb-3">
           <i class="fas fa-info-circle mr-1"></i>
-          智能预检机制：基于有效密钥使用情况和API调用统计，动态调整预检策略，确保高并发场景下的密钥可用性
+          智能预检机制：提前检查密钥有效性，当使用到预检范围的指定比例时自动触发下一轮预检，确保密钥持续可用
         </div>
-        <div class="flex flex-wrap gap-2 text-xs text-gray-500">
-          <span><i class="fas fa-brain text-blue-500"></i> 智能触发机制</span>
-          <span><i class="fas fa-chart-line text-green-500"></i> 动态参数调整</span>
-          <span><i class="fas fa-shield-check text-cyan-500"></i> 安全缓冲保护</span>
-          <span><i class="fas fa-snowflake text-indigo-500"></i> 自动冷冻429错误</span>
-          <span><i class="fas fa-tachometer-alt text-purple-500"></i> 高并发优化</span>
+        <div class="flex flex-wrap gap-3 text-sm text-gray-600">
+          <span><i class="fas fa-brain text-blue-500 mr-1"></i> 智能触发</span>
+          <span><i class="fas fa-shield-check text-green-500 mr-1"></i> 预防性检查</span>
+          <span><i class="fas fa-snowflake text-indigo-500 mr-1"></i> 自动冷冻失效密钥</span>
+          <span><i class="fas fa-tachometer-alt text-purple-500 mr-1"></i> 高并发优化</span>
         </div>
       </div>
     </div>
@@ -1451,6 +1390,7 @@ endblock %} {% block head_extra_styles %}
               id="itemsPerPageSelect"
               class="form-select h-7 px-2 py-1 text-sm border rounded focus:ring-primary-500 focus:border-primary-500"
               onclick="event.stopPropagation();"
+              onchange="console.log('内联事件触发:', this.value); if(window.handleItemsPerPageChange) window.handleItemsPerPageChange(event);"
             >
               <option value="10">10</option>
               <option value="20">20</option>
@@ -1459,6 +1399,14 @@ endblock %} {% block head_extra_styles %}
               <option value="500">500</option>
             </select>
             <span class="text-sm select-none font-semibold" style="color: #1f2937 !important;">项</span>
+            <!-- 调试按钮 -->
+            <button
+              onclick="console.log('当前分页大小:', document.getElementById('itemsPerPageSelect').value); console.log('itemsPerPage变量:', window.itemsPerPage || 'undefined');"
+              class="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+              title="调试分页"
+            >
+              调试
+            </button>
           </div>
         </div>
         <!-- Right side: Select All -->
