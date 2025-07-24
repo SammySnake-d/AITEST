@@ -670,8 +670,6 @@ async def update_precheck_config(
             settings.KEY_PRECHECK_COUNT = request.count
         if request.trigger_ratio is not None:
             settings.KEY_PRECHECK_TRIGGER_RATIO = request.trigger_ratio
-        if request.min_reserve_ratio is not None:
-            settings.KEY_PRECHECK_MIN_RESERVE_RATIO = request.min_reserve_ratio
 
         # 返回更新后的配置
         min_keys_required = key_manager.precheck_estimated_concurrent * key_manager.precheck_min_keys_multiplier
