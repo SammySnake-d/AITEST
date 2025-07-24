@@ -606,9 +606,14 @@ endblock %} {% block head_extra_styles %}
   }
 
   /* Fix batch actions area purple background */
-  #validBatchActions, #invalidBatchActions {
+  #validBatchActions, #invalidBatchActions, #disabledBatchActions {
     background-color: rgba(249, 250, 251, 0.95) !important; /* light gray */
     border-color: rgba(0, 0, 0, 0.08) !important;
+  }
+
+  /* Ensure hidden class works properly for batch actions */
+  #validBatchActions.hidden, #invalidBatchActions.hidden, #disabledBatchActions.hidden {
+    display: none !important;
   }
 
   #validBatchActions .text-gray-200, #invalidBatchActions .text-gray-200 {
@@ -1062,6 +1067,7 @@ endblock %} {% block head_extra_styles %}
       </div>
       <!-- 手动刷新按钮 -->
       <button
+        id="manualRefreshBtn"
         class="bg-white bg-opacity-20 hover:bg-opacity-30 rounded-full w-8 h-8 flex items-center justify-center text-primary-600 transition-all duration-300"
         onclick="refreshPage(this)"
         title="手动刷新"
@@ -1308,10 +1314,14 @@ endblock %} {% block head_extra_styles %}
       <!-- 批量操作按钮组 (仅在选中时显示) -->
       <div
         id="validBatchActions"
-        class="p-3 border-t hidden flex items-center flex-wrap gap-3"
+        class="p-3 border-t hidden"
         style="
           background-color: rgba(249, 250, 251, 0.95);
           border-color: rgba(0, 0, 0, 0.08);
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.75rem;
         "
       >
         <!-- Added flex-wrap -->
@@ -1500,10 +1510,14 @@ endblock %} {% block head_extra_styles %}
       <!-- 批量操作按钮组 (仅在选中时显示) -->
       <div
         id="invalidBatchActions"
-        class="p-3 border-t hidden flex items-center flex-wrap gap-3"
+        class="p-3 border-t hidden"
         style="
           background-color: rgba(249, 250, 251, 0.95);
           border-color: rgba(0, 0, 0, 0.08);
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.75rem;
         "
       >
         <!-- Added flex-wrap -->
@@ -1690,10 +1704,14 @@ endblock %} {% block head_extra_styles %}
       <!-- 批量操作按钮组 (仅在选中时显示) -->
       <div
         id="disabledBatchActions"
-        class="p-3 border-t hidden flex items-center flex-wrap gap-3"
+        class="p-3 border-t hidden"
         style="
           background-color: rgba(249, 250, 251, 0.95);
           border-color: rgba(0, 0, 0, 0.08);
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.75rem;
         "
       >
         <!-- Added flex-wrap -->

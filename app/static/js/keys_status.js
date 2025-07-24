@@ -120,15 +120,30 @@ function updateBatchActions(type) {
   const count = selectedKeys.length;
   const batchActionsDiv = document.getElementById(`${type}BatchActions`);
   const selectedCountSpan = document.getElementById(`${type}SelectedCount`);
+
+  // 检查批量操作区域是否存在
+  if (!batchActionsDiv) {
+    console.warn(`批量操作区域 ${type}BatchActions 不存在`);
+    return;
+  }
+
   const buttons = batchActionsDiv.querySelectorAll("button");
 
   if (count > 0) {
     batchActionsDiv.classList.remove("hidden");
-    selectedCountSpan.textContent = count;
+    // 强制设置display样式以确保显示
+    batchActionsDiv.style.display = "flex";
+    if (selectedCountSpan) {
+      selectedCountSpan.textContent = count;
+    }
     buttons.forEach((button) => (button.disabled = false));
   } else {
     batchActionsDiv.classList.add("hidden");
-    selectedCountSpan.textContent = "0";
+    // 强制设置display样式以确保隐藏
+    batchActionsDiv.style.display = "none";
+    if (selectedCountSpan) {
+      selectedCountSpan.textContent = "0";
+    }
     buttons.forEach((button) => (button.disabled = true));
   }
 
@@ -154,6 +169,13 @@ function updateBatchActions(type) {
 // 全选/取消全选指定类型的密钥
 function toggleSelectAll(type, isChecked) {
   const listElement = document.getElementById(`${type}Keys`);
+
+  // 检查列表元素是否存在
+  if (!listElement) {
+    console.warn(`列表元素 ${type}Keys 不存在`);
+    return;
+  }
+
   // Select checkboxes within LI elements that are NOT styled with display:none
   // This targets currently visible items based on filtering.
   const visibleCheckboxes = listElement.querySelectorAll(
@@ -366,11 +388,44 @@ function resetAllKeysFailCount(type, event) {
   showResetModal(type);
 }
 
+// 刷新数据而不刷新页面
+async function refreshDataOnly() {
+  try {
+    // 清除所有缓存
+    paginationCache = {
+      valid: { page: 0, data: null, search: "", threshold: 0 },
+      invalid: { page: 0, data: null, search: "" },
+      disabled: { page: 0, data: null, search: "" }
+    };
+
+    // 重新加载当前页面的数据
+    await displayPageBackend("valid", validCurrentPage || 1);
+    await displayPageBackend("invalid", invalidCurrentPage || 1);
+    await displayPageBackend("disabled", disabledCurrentPage || 1);
+
+    showNotification("数据已更新", "success", 2000);
+  } catch (error) {
+    console.error("刷新数据失败:", error);
+    showNotification("数据更新失败", "error", 3000);
+  }
+}
+
 // 关闭模态框并根据参数决定是否刷新页面
 function closeResultModal(reload = true) {
   document.getElementById("resultModal").classList.add("hidden");
+
+  // 检查自动刷新是否开启
+  const autoRefreshToggle = document.getElementById("autoRefreshToggle");
+  const isAutoRefreshEnabled = autoRefreshToggle && autoRefreshToggle.checked;
+
   if (reload) {
-    location.reload(); // 操作完成后刷新页面
+    if (isAutoRefreshEnabled) {
+      // 如果自动刷新开启，则刷新整个页面
+      location.reload();
+    } else {
+      // 如果自动刷新关闭，则只刷新数据
+      refreshDataOnly();
+    }
   }
 }
 
@@ -595,8 +650,8 @@ function showVerificationResultModal(data) {
     messageElement.appendChild(failDiv);
   }
 
-  // 设置确认按钮点击事件 - 总是自动刷新
-  confirmButton.onclick = () => closeResultModal(true); // Always reload
+  // 设置确认按钮点击事件 - 根据自动刷新设置决定是否刷新页面
+  confirmButton.onclick = () => closeResultModal(true);
 
   // 显示模态框
   modalElement.classList.remove("hidden");
@@ -700,10 +755,31 @@ function refreshPage(button) {
   const icon = button.querySelector("i");
   if (icon) icon.classList.add("fa-spin"); // Add spin animation
 
-  setTimeout(() => {
-    window.location.reload();
-    // No need to remove loading/spin as page reloads
-  }, 300);
+  // 检查自动刷新是否开启
+  const autoRefreshToggle = document.getElementById("autoRefreshToggle");
+  const isAutoRefreshEnabled = autoRefreshToggle && autoRefreshToggle.checked;
+
+  if (isAutoRefreshEnabled) {
+    // 如果自动刷新开启，则刷新整个页面
+    setTimeout(() => {
+      window.location.reload();
+      // No need to remove loading/spin as page reloads
+    }, 300);
+  } else {
+    // 如果自动刷新关闭，则只刷新数据
+    setTimeout(async () => {
+      try {
+        await refreshDataOnly();
+      } catch (error) {
+        console.error("刷新数据失败:", error);
+      } finally {
+        // 恢复按钮状态
+        button.classList.remove("loading");
+        button.disabled = false;
+        if (icon) icon.classList.remove("fa-spin");
+      }
+    }, 300);
+  }
 }
 
 // 展开/收起区块内容的函数，带有平滑动画效果。
@@ -1060,6 +1136,21 @@ function initializeKeySelectionListeners() {
   setupEventListenersForList("disabledKeys", "disabled");
 }
 
+// 更新手动刷新按钮的提示文本
+function updateManualRefreshButtonTitle() {
+  const manualRefreshBtn = document.getElementById("manualRefreshBtn");
+  const autoRefreshToggle = document.getElementById("autoRefreshToggle");
+
+  if (manualRefreshBtn) {
+    const isAutoRefreshEnabled = autoRefreshToggle && autoRefreshToggle.checked;
+    if (isAutoRefreshEnabled) {
+      manualRefreshBtn.title = "手动刷新（整页刷新）";
+    } else {
+      manualRefreshBtn.title = "手动刷新（仅更新数据）";
+    }
+  }
+}
+
 function initializeAutoRefreshControls() {
   const autoRefreshToggle = document.getElementById("autoRefreshToggle");
   const autoRefreshIntervalTime = 60000; // 60秒
@@ -1073,6 +1164,7 @@ function initializeAutoRefreshControls() {
       console.log("自动刷新 keys_status 页面...");
       location.reload();
     }, autoRefreshIntervalTime);
+    updateManualRefreshButtonTitle();
   }
 
   function stopAutoRefresh() {
@@ -1082,6 +1174,7 @@ function initializeAutoRefreshControls() {
       clearInterval(autoRefreshTimer);
       autoRefreshTimer = null;
     }
+    updateManualRefreshButtonTitle();
   }
 
   if (autoRefreshToggle) {
@@ -1090,6 +1183,8 @@ function initializeAutoRefreshControls() {
     autoRefreshToggle.checked = isAutoRefreshEnabled;
     if (isAutoRefreshEnabled) {
       startAutoRefresh();
+    } else {
+      updateManualRefreshButtonTitle();
     }
     autoRefreshToggle.addEventListener("change", () => {
       if (autoRefreshToggle.checked) {
