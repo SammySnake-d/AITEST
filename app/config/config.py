@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     KEY_FREEZE_DURATION_SECONDS: int = 65  # 429错误后密钥冷冻时间（秒）
     ENABLE_KEY_FREEZE_ON_429: bool = True  # 是否启用429错误自动冷冻功能
 
+    # 密钥预检配置
+    KEY_PRECHECK_ENABLED: bool = True  # 是否启用密钥预检机制
+    KEY_PRECHECK_COUNT: int = 100  # 预检密钥数量（检查指针后面n个密钥）
+    KEY_PRECHECK_TRIGGER_RATIO: float = 0.67  # 预检触发比例（当使用到预检范围的2/3时触发下一次预检）
+    KEY_PRECHECK_MIN_KEYS_MULTIPLIER: int = 5  # 密钥数量必须是并发数的n倍才启用预检
+    KEY_PRECHECK_ESTIMATED_CONCURRENT_REQUESTS: int = 20  # 估计的每秒并发请求数
+    KEY_PRECHECK_DYNAMIC_ADJUSTMENT: bool = True  # 是否启用基于API调用统计的动态调整
+    KEY_PRECHECK_SAFETY_BUFFER_RATIO: float = 1.5  # 安全缓冲比例（预检数量相对于每分钟调用数的倍数）
+    KEY_PRECHECK_MIN_RESERVE_RATIO: float = 0.3  # 最小保留比例（剩余预检密钥不能低于此比例）
+
     # 智能路由配置
     URL_NORMALIZATION_ENABLED: bool = False  # 是否启用智能路由映射功能
 

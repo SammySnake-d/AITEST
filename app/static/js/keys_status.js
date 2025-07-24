@@ -376,9 +376,9 @@ async function refreshDataOnly() {
   try {
     // 清除所有缓存
     paginationCache = {
-      valid: { page: 0, data: null, search: "", threshold: 0 },
-      invalid: { page: 0, data: null, search: "" },
-      disabled: { page: 0, data: null, search: "" }
+      valid: { page: 0, data: null, search: "", threshold: 0, itemsPerPage: 0 },
+      invalid: { page: 0, data: null, search: "", itemsPerPage: 0 },
+      disabled: { page: 0, data: null, search: "", itemsPerPage: 0 }
     };
 
     // 重新加载当前页面的数据
@@ -1174,9 +1174,9 @@ let currentFailCountThreshold = 0;
 
 // Cache for pagination data to avoid unnecessary API calls
 let paginationCache = {
-  valid: { page: 0, data: null, search: "", threshold: 0 },
-  invalid: { page: 0, data: null, search: "" },
-  disabled: { page: 0, data: null, search: "" }
+  valid: { page: 0, data: null, search: "", threshold: 0, itemsPerPage: 0 },
+  invalid: { page: 0, data: null, search: "", itemsPerPage: 0 },
+  disabled: { page: 0, data: null, search: "", itemsPerPage: 0 }
 };
 
 /**
@@ -1330,7 +1330,7 @@ async function displayPageBackend(keyType, page = 1) {
   const cache = paginationCache[keyType];
 
   let response;
-  if (cache.page === page && cache.search === search && cache.threshold === threshold && cache.data) {
+  if (cache.page === page && cache.search === search && cache.threshold === threshold && cache.itemsPerPage === itemsPerPage && cache.data) {
     response = cache.data;
   } else {
     // 从后端获取数据
@@ -1345,7 +1345,8 @@ async function displayPageBackend(keyType, page = 1) {
       page: page,
       data: response,
       search: search,
-      threshold: threshold
+      threshold: threshold,
+      itemsPerPage: itemsPerPage
     };
   }
 
@@ -1495,9 +1496,9 @@ function initializeKeyPaginationAndSearch() {
       itemsPerPage = parseInt(itemsPerPageSelect.value, 10);
       // 清除缓存并重新加载所有类型的第一页
       paginationCache = {
-        valid: { page: 0, data: null, search: "", threshold: 0 },
-        invalid: { page: 0, data: null, search: "" },
-        disabled: { page: 0, data: null, search: "" }
+        valid: { page: 0, data: null, search: "", threshold: 0, itemsPerPage: 0 },
+        invalid: { page: 0, data: null, search: "", itemsPerPage: 0 },
+        disabled: { page: 0, data: null, search: "", itemsPerPage: 0 }
       };
       displayPageBackend("valid", 1);
       displayPageBackend("invalid", 1);
@@ -1513,7 +1514,7 @@ function initializeKeyPaginationAndSearch() {
       searchTimeout = setTimeout(() => {
         currentSearch = searchInput.value.trim();
         // 清除valid类型的缓存并重新加载
-        paginationCache.valid = { page: 0, data: null, search: "", threshold: 0 };
+        paginationCache.valid = { page: 0, data: null, search: "", threshold: 0, itemsPerPage: 0 };
         displayPageBackend("valid", 1);
       }, 300); // 防抖，300ms后执行搜索
     });
@@ -1527,7 +1528,7 @@ function initializeKeyPaginationAndSearch() {
       thresholdTimeout = setTimeout(() => {
         currentFailCountThreshold = parseInt(thresholdInput.value, 10) || 0;
         // 清除valid类型的缓存并重新加载
-        paginationCache.valid = { page: 0, data: null, search: "", threshold: 0 };
+        paginationCache.valid = { page: 0, data: null, search: "", threshold: 0, itemsPerPage: 0 };
         displayPageBackend("valid", 1);
       }, 300); // 防抖，300ms后执行过滤
     });
@@ -1563,6 +1564,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initializeKeySelectionListeners();
   initializeAutoRefreshControls();
   initializeKeyPaginationAndSearch(); // This will also handle initial display
+  initializePrecheckConfig(); // 初始化预检配置
   registerServiceWorker();
 
   // Initial batch actions update might be needed if not covered by displayPage
@@ -2015,6 +2017,229 @@ window.closeKeyUsageDetailsModal = function () {
 };
 
 // window.renderKeyUsageDetails 函数已被移入 showKeyUsageDetails 内部, 此处残留代码已删除。
+
+// --- 预检配置相关功能 ---
+
+/**
+ * 初始化预检配置
+ */
+async function initializePrecheckConfig() {
+  try {
+    await loadPrecheckConfig();
+  } catch (error) {
+    console.error('Failed to initialize precheck config:', error);
+    showNotification('预检配置初始化失败', 'error');
+  }
+}
+
+/**
+ * 加载预检配置
+ */
+async function loadPrecheckConfig() {
+  try {
+    const response = await fetchAPI('/gemini/v1beta/precheck-config');
+    if (response && response.success) {
+      const config = response.data;
+
+      // 更新UI
+      document.getElementById('precheckEnabled').checked = config.enabled;
+      document.getElementById('precheckCount').value = config.count;
+      document.getElementById('precheckTriggerRatio').value = config.trigger_ratio;
+      document.getElementById('precheckMinKeysMultiplier').value = config.min_keys_multiplier;
+      document.getElementById('precheckEstimatedConcurrent').value = config.estimated_concurrent;
+      document.getElementById('precheckDynamicAdjustment').checked = config.dynamic_adjustment;
+      document.getElementById('precheckSafetyBufferRatio').value = config.safety_buffer_ratio;
+      document.getElementById('precheckMinReserveRatio').value = config.min_reserve_ratio;
+
+      // 更新状态显示
+      updatePrecheckStatus(config.enabled);
+      updatePrecheckStatusInfo(config);
+      updatePrecheckStatsInfo(config);
+
+      console.log('Precheck config loaded:', config);
+    } else {
+      throw new Error(response?.message || '获取预检配置失败');
+    }
+  } catch (error) {
+    console.error('Failed to load precheck config:', error);
+    showNotification('加载预检配置失败: ' + error.message, 'error');
+  }
+}
+
+/**
+ * 保存预检配置
+ */
+async function savePrecheckConfig() {
+  const saveButton = document.getElementById('savePrecheckConfig');
+  const originalText = saveButton.innerHTML;
+
+  try {
+    // 显示保存状态
+    saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 保存中...';
+    saveButton.disabled = true;
+
+    // 获取配置值
+    const enabled = document.getElementById('precheckEnabled').checked;
+    const count = parseInt(document.getElementById('precheckCount').value, 10);
+    const triggerRatio = parseFloat(document.getElementById('precheckTriggerRatio').value);
+    const minKeysMultiplier = parseInt(document.getElementById('precheckMinKeysMultiplier').value, 10);
+    const estimatedConcurrent = parseInt(document.getElementById('precheckEstimatedConcurrent').value, 10);
+    const dynamicAdjustment = document.getElementById('precheckDynamicAdjustment').checked;
+    const safetyBufferRatio = parseFloat(document.getElementById('precheckSafetyBufferRatio').value);
+    const minReserveRatio = parseFloat(document.getElementById('precheckMinReserveRatio').value);
+
+    // 验证输入
+    if (count < 0 || count > 1000) {
+      throw new Error('预检数量必须在0-1000之间');
+    }
+    if (triggerRatio < 0.1 || triggerRatio > 1.0) {
+      throw new Error('触发比例必须在0.1-1.0之间');
+    }
+    if (minKeysMultiplier < 1 || minKeysMultiplier > 20) {
+      throw new Error('密钥倍数必须在1-20之间');
+    }
+    if (estimatedConcurrent < 1 || estimatedConcurrent > 1000) {
+      throw new Error('估计并发数必须在1-1000之间');
+    }
+    if (safetyBufferRatio < 1.0 || safetyBufferRatio > 5.0) {
+      throw new Error('安全缓冲比例必须在1.0-5.0之间');
+    }
+    if (minReserveRatio < 0.1 || minReserveRatio > 0.9) {
+      throw new Error('最小保留比例必须在0.1-0.9之间');
+    }
+
+    // 发送请求
+    const response = await fetchAPI('/gemini/v1beta/precheck-config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        enabled: enabled,
+        count: count,
+        trigger_ratio: triggerRatio,
+        min_keys_multiplier: minKeysMultiplier,
+        estimated_concurrent: estimatedConcurrent,
+        dynamic_adjustment: dynamicAdjustment,
+        safety_buffer_ratio: safetyBufferRatio,
+        min_reserve_ratio: minReserveRatio
+      })
+    });
+
+    if (response && response.success) {
+      // 更新状态显示
+      updatePrecheckStatus(enabled);
+      updatePrecheckStatusInfo(response.data);
+      updatePrecheckStatsInfo(response.data);
+      showNotification('预检配置保存成功', 'success');
+      console.log('Precheck config saved:', response.data);
+    } else {
+      throw new Error(response?.message || '保存预检配置失败');
+    }
+  } catch (error) {
+    console.error('Failed to save precheck config:', error);
+    showNotification('保存预检配置失败: ' + error.message, 'error');
+  } finally {
+    // 恢复按钮状态
+    saveButton.innerHTML = originalText;
+    saveButton.disabled = false;
+  }
+}
+
+/**
+ * 更新预检状态显示
+ */
+function updatePrecheckStatus(enabled) {
+  const statusElement = document.getElementById('precheckStatus');
+  if (enabled) {
+    statusElement.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> 已启用';
+    statusElement.className = 'text-sm font-medium px-2 py-1 rounded-full bg-green-100 text-green-700';
+  } else {
+    statusElement.innerHTML = '<i class="fas fa-times-circle text-red-500"></i> 已禁用';
+    statusElement.className = 'text-sm font-medium px-2 py-1 rounded-full bg-red-100 text-red-700';
+  }
+}
+
+/**
+ * 更新预检状态信息
+ */
+function updatePrecheckStatusInfo(config) {
+  const statusInfoElement = document.getElementById('precheckStatusInfo');
+  if (config.enabled) {
+    const statusText = `需要${config.min_keys_required}个密钥，当前${config.current_keys_count}个`;
+    if (config.current_keys_count >= config.min_keys_required) {
+      statusInfoElement.innerHTML = `<i class="fas fa-check text-green-500"></i> ${statusText}`;
+      statusInfoElement.className = 'text-xs text-green-600';
+    } else {
+      statusInfoElement.innerHTML = `<i class="fas fa-exclamation-triangle text-orange-500"></i> ${statusText}`;
+      statusInfoElement.className = 'text-xs text-orange-600';
+    }
+  } else {
+    statusInfoElement.innerHTML = '<i class="fas fa-info-circle text-gray-500"></i> 预检已禁用';
+    statusInfoElement.className = 'text-xs text-gray-500';
+  }
+}
+
+/**
+ * 更新预检统计信息
+ */
+function updatePrecheckStatsInfo(config) {
+  // 更新上分钟调用数
+  const lastMinuteCallsElement = document.getElementById('precheckLastMinuteCalls');
+  if (lastMinuteCallsElement) {
+    lastMinuteCallsElement.textContent = config.last_minute_calls || 0;
+  }
+
+  // 更新当前批次大小
+  const currentBatchSizeElement = document.getElementById('precheckCurrentBatchSize');
+  if (currentBatchSizeElement) {
+    currentBatchSizeElement.textContent = config.current_batch_size || config.count;
+  }
+
+  // 更新批次有效密钥数
+  const batchValidCountElement = document.getElementById('precheckCurrentBatchValidCount');
+  if (batchValidCountElement) {
+    batchValidCountElement.textContent = config.current_batch_valid_count || 0;
+  }
+
+  // 更新已过有效密钥数
+  const validKeysPassedElement = document.getElementById('precheckValidKeysPassedCount');
+  if (validKeysPassedElement) {
+    validKeysPassedElement.textContent = config.valid_keys_passed_count || 0;
+  }
+
+  // 更新触发阈值
+  const triggerThresholdElement = document.getElementById('precheckValidKeysTriggerThreshold');
+  if (triggerThresholdElement) {
+    triggerThresholdElement.textContent = config.valid_keys_trigger_threshold || 0;
+  }
+
+  // 更新有效密钥位置
+  const validKeysPositionsElement = document.getElementById('precheckValidKeysPositions');
+  if (validKeysPositionsElement) {
+    const positions = config.current_batch_valid_keys || [];
+    if (positions.length > 0) {
+      validKeysPositionsElement.textContent = positions.join(', ');
+    } else {
+      validKeysPositionsElement.textContent = '暂无有效密钥';
+    }
+  }
+
+  // 更新下一批次状态
+  const nextBatchStatusElement = document.getElementById('precheckNextBatchStatus');
+  if (nextBatchStatusElement) {
+    if (config.next_batch_ready) {
+      nextBatchStatusElement.textContent = `就绪(${config.next_batch_valid_count})`;
+      nextBatchStatusElement.className = 'text-lg font-semibold text-green-600';
+    } else {
+      nextBatchStatusElement.textContent = '未就绪';
+      nextBatchStatusElement.className = 'text-lg font-semibold text-gray-600';
+    }
+  }
+}
+
+// 将函数暴露到全局作用域
+window.savePrecheckConfig = savePrecheckConfig;
 
 // --- Key List Display & Pagination ---
 

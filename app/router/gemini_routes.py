@@ -10,6 +10,8 @@ from app.domain.gemini_models import (
     BatchSearchKeysRequest, BatchOperationKeysRequest, KeyFreezeRequest,
     KeysPaginationRequest, KeysPaginationResponse
 )
+from pydantic import BaseModel
+from typing import Optional, List
 from app.service.chat.gemini_chat_service import GeminiChatService
 from app.service.key.key_manager import KeyManager, get_key_manager_instance
 from app.service.tts.native.tts_routes import get_tts_chat_service
@@ -566,6 +568,171 @@ async def get_keys_paginated(
     except Exception as e:
         logger.error(f"Failed to get paginated keys: {str(e)}")
         return JSONResponse({"success": False, "message": f"获取密钥列表失败: {str(e)}"}, status_code=500)
+
+
+# 预检配置相关模型
+class KeyPrecheckConfigRequest(BaseModel):
+    enabled: Optional[bool] = None
+    count: Optional[int] = None
+    trigger_ratio: Optional[float] = None
+    min_keys_multiplier: Optional[int] = None
+    estimated_concurrent: Optional[int] = None
+    dynamic_adjustment: Optional[bool] = None
+    safety_buffer_ratio: Optional[float] = None
+    min_reserve_ratio: Optional[float] = None
+
+
+class KeyPrecheckConfigResponse(BaseModel):
+    enabled: bool
+    count: int
+    trigger_ratio: float
+    min_keys_multiplier: int
+    estimated_concurrent: int
+    dynamic_adjustment: bool
+    safety_buffer_ratio: float
+    min_reserve_ratio: float
+    min_keys_required: int
+    current_keys_count: int
+    last_minute_calls: int
+    current_batch_size: int
+    current_batch_valid_count: int
+    valid_keys_passed_count: int
+    valid_keys_trigger_threshold: int
+    current_batch_valid_keys: List[int]
+    next_batch_ready: bool
+    next_batch_valid_count: int
+
+
+@router.get("/precheck-config")
+async def get_precheck_config(
+    key_manager: KeyManager = Depends(get_key_manager)
+):
+    """获取密钥预检配置"""
+    logger.info("-" * 50 + "get_precheck_config" + "-" * 50)
+
+    try:
+        min_keys_required = key_manager.precheck_estimated_concurrent * key_manager.precheck_min_keys_multiplier
+        config = {
+            "enabled": key_manager.precheck_enabled,
+            "count": key_manager.precheck_count,
+            "trigger_ratio": key_manager.precheck_trigger_ratio,
+            "min_keys_multiplier": key_manager.precheck_min_keys_multiplier,
+            "estimated_concurrent": key_manager.precheck_estimated_concurrent,
+            "dynamic_adjustment": key_manager.precheck_dynamic_adjustment,
+            "safety_buffer_ratio": key_manager.precheck_safety_buffer_ratio,
+            "min_reserve_ratio": key_manager.precheck_min_reserve_ratio,
+            "min_keys_required": min_keys_required,
+            "current_keys_count": len(key_manager.api_keys),
+            "last_minute_calls": key_manager.last_minute_calls,
+            "current_batch_size": key_manager.precheck_current_batch_size,
+            "current_batch_valid_count": key_manager.current_batch_valid_count,
+            "valid_keys_passed_count": key_manager.valid_keys_passed_count,
+            "valid_keys_trigger_threshold": key_manager.valid_keys_trigger_threshold,
+            "current_batch_valid_keys": key_manager.current_batch_valid_keys,
+            "next_batch_ready": key_manager.next_batch_ready,
+            "next_batch_valid_count": key_manager.next_batch_valid_count
+        }
+
+        logger.info(f"Current precheck config: {config}")
+        return JSONResponse({
+            "success": True,
+            "data": config
+        })
+    except Exception as e:
+        logger.error(f"Failed to get precheck config: {str(e)}")
+        return JSONResponse({"success": False, "message": f"获取预检配置失败: {str(e)}"}, status_code=500)
+
+
+@router.post("/precheck-config")
+async def update_precheck_config(
+    request: KeyPrecheckConfigRequest,
+    key_manager: KeyManager = Depends(get_key_manager)
+):
+    """更新密钥预检配置"""
+    logger.info("-" * 50 + "update_precheck_config" + "-" * 50)
+
+    try:
+        # 验证参数
+        if request.count is not None and request.count < 0:
+            return JSONResponse({"success": False, "message": "预检密钥数量不能小于0"}, status_code=400)
+
+        if request.trigger_ratio is not None and (request.trigger_ratio < 0.1 or request.trigger_ratio > 1.0):
+            return JSONResponse({"success": False, "message": "触发比例必须在0.1-1.0之间"}, status_code=400)
+
+        if request.min_keys_multiplier is not None and request.min_keys_multiplier < 1:
+            return JSONResponse({"success": False, "message": "密钥倍数必须大于等于1"}, status_code=400)
+
+        if request.estimated_concurrent is not None and request.estimated_concurrent < 1:
+            return JSONResponse({"success": False, "message": "估计并发数必须大于等于1"}, status_code=400)
+
+        if request.safety_buffer_ratio is not None and request.safety_buffer_ratio < 1.0:
+            return JSONResponse({"success": False, "message": "安全缓冲比例必须大于等于1.0"}, status_code=400)
+
+        if request.min_reserve_ratio is not None and (request.min_reserve_ratio < 0.1 or request.min_reserve_ratio > 0.9):
+            return JSONResponse({"success": False, "message": "最小保留比例必须在0.1-0.9之间"}, status_code=400)
+
+        # 更新配置
+        key_manager.update_precheck_config(
+            enabled=request.enabled,
+            count=request.count,
+            trigger_ratio=request.trigger_ratio,
+            min_keys_multiplier=request.min_keys_multiplier,
+            estimated_concurrent=request.estimated_concurrent,
+            dynamic_adjustment=request.dynamic_adjustment,
+            safety_buffer_ratio=request.safety_buffer_ratio,
+            min_reserve_ratio=request.min_reserve_ratio
+        )
+
+        # 同时更新全局settings
+        if request.enabled is not None:
+            settings.KEY_PRECHECK_ENABLED = request.enabled
+        if request.count is not None:
+            settings.KEY_PRECHECK_COUNT = request.count
+        if request.trigger_ratio is not None:
+            settings.KEY_PRECHECK_TRIGGER_RATIO = request.trigger_ratio
+        if request.min_keys_multiplier is not None:
+            settings.KEY_PRECHECK_MIN_KEYS_MULTIPLIER = request.min_keys_multiplier
+        if request.estimated_concurrent is not None:
+            settings.KEY_PRECHECK_ESTIMATED_CONCURRENT_REQUESTS = request.estimated_concurrent
+        if request.dynamic_adjustment is not None:
+            settings.KEY_PRECHECK_DYNAMIC_ADJUSTMENT = request.dynamic_adjustment
+        if request.safety_buffer_ratio is not None:
+            settings.KEY_PRECHECK_SAFETY_BUFFER_RATIO = request.safety_buffer_ratio
+        if request.min_reserve_ratio is not None:
+            settings.KEY_PRECHECK_MIN_RESERVE_RATIO = request.min_reserve_ratio
+
+        # 返回更新后的配置
+        min_keys_required = key_manager.precheck_estimated_concurrent * key_manager.precheck_min_keys_multiplier
+        updated_config = {
+            "enabled": key_manager.precheck_enabled,
+            "count": key_manager.precheck_count,
+            "trigger_ratio": key_manager.precheck_trigger_ratio,
+            "min_keys_multiplier": key_manager.precheck_min_keys_multiplier,
+            "estimated_concurrent": key_manager.precheck_estimated_concurrent,
+            "dynamic_adjustment": key_manager.precheck_dynamic_adjustment,
+            "safety_buffer_ratio": key_manager.precheck_safety_buffer_ratio,
+            "min_reserve_ratio": key_manager.precheck_min_reserve_ratio,
+            "min_keys_required": min_keys_required,
+            "current_keys_count": len(key_manager.api_keys),
+            "last_minute_calls": key_manager.last_minute_calls,
+            "current_batch_size": key_manager.precheck_current_batch_size,
+            "current_batch_valid_count": key_manager.current_batch_valid_count,
+            "valid_keys_passed_count": key_manager.valid_keys_passed_count,
+            "valid_keys_trigger_threshold": key_manager.valid_keys_trigger_threshold,
+            "current_batch_valid_keys": key_manager.current_batch_valid_keys,
+            "next_batch_ready": key_manager.next_batch_ready,
+            "next_batch_valid_count": key_manager.next_batch_valid_count
+        }
+
+        logger.info(f"Precheck config updated: {updated_config}")
+        return JSONResponse({
+            "success": True,
+            "message": "预检配置更新成功",
+            "data": updated_config
+        })
+    except Exception as e:
+        logger.error(f"Failed to update precheck config: {str(e)}")
+        return JSONResponse({"success": False, "message": f"更新预检配置失败: {str(e)}"}, status_code=500)
 
 
 @router.post("/batch-operation-keys")
