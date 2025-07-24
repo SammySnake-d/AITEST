@@ -101,7 +101,7 @@ class KeyFreezeRequest(BaseModel):
 class KeysPaginationRequest(BaseModel):
     key_type: Literal["valid", "invalid", "disabled"] = "valid"  # 密钥类型
     page: int = Field(1, ge=1, description="页码，从1开始")
-    page_size: int = Field(10, ge=1, le=100, description="每页大小，最大100")
+    page_size: int = Field(10, ge=1, le=1000, description="每页大小，最大1000")
     search: Optional[str] = Field(None, description="搜索关键词")
     fail_count_threshold: Optional[int] = Field(0, ge=0, description="失败次数阈值（仅对valid类型有效）")
 

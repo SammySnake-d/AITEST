@@ -1390,7 +1390,7 @@ endblock %} {% block head_extra_styles %}
               id="itemsPerPageSelect"
               class="form-select h-7 px-2 py-1 text-sm border rounded focus:ring-primary-500 focus:border-primary-500"
               onclick="event.stopPropagation();"
-              onchange="console.log('内联事件触发:', this.value); if(window.handleItemsPerPageChange) window.handleItemsPerPageChange(event);"
+
             >
               <option value="10">10</option>
               <option value="20">20</option>
@@ -1399,14 +1399,6 @@ endblock %} {% block head_extra_styles %}
               <option value="500">500</option>
             </select>
             <span class="text-sm select-none font-semibold" style="color: #1f2937 !important;">项</span>
-            <!-- 调试按钮 -->
-            <button
-              onclick="console.log('当前分页大小:', document.getElementById('itemsPerPageSelect').value); console.log('itemsPerPage变量:', window.itemsPerPage || 'undefined');"
-              class="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
-              title="调试分页"
-            >
-              调试
-            </button>
           </div>
         </div>
         <!-- Right side: Select All -->

@@ -1175,7 +1175,6 @@ let currentFailCountThreshold = 0;
 // 分页大小变更处理函数
 function handleItemsPerPageChange(event) {
   const newItemsPerPage = parseInt(event.target.value, 10);
-  console.log(`分页大小变更: ${itemsPerPage} -> ${newItemsPerPage}`);
 
   if (newItemsPerPage !== itemsPerPage) {
     itemsPerPage = newItemsPerPage;
@@ -1186,8 +1185,6 @@ function handleItemsPerPageChange(event) {
       invalid: { page: 0, data: null, search: "", itemsPerPage: 0 },
       disabled: { page: 0, data: null, search: "", itemsPerPage: 0 }
     };
-
-    console.log(`开始重新加载页面，新的分页大小: ${itemsPerPage}`);
 
     // 重新加载所有页面
     displayPageBackend("valid", 1);
@@ -1518,7 +1515,6 @@ function initializeKeyPaginationAndSearch() {
   // 初始化每页显示数量
   if (itemsPerPageSelect) {
     itemsPerPage = parseInt(itemsPerPageSelect.value, 10);
-    console.log(`初始化分页大小: ${itemsPerPage}`);
 
     // 移除可能存在的旧事件监听器
     itemsPerPageSelect.removeEventListener("change", handleItemsPerPageChange);
@@ -1528,10 +1524,6 @@ function initializeKeyPaginationAndSearch() {
 
     // 同时添加input事件作为备用
     itemsPerPageSelect.addEventListener("input", handleItemsPerPageChange);
-
-    console.log(`分页大小选择器事件监听器已绑定`);
-  } else {
-    console.error("未找到itemsPerPageSelect元素");
   }
 
   // 搜索输入事件监听
@@ -1586,7 +1578,6 @@ function registerServiceWorker() {
 // 添加全局事件委托来处理分页大小变更
 document.addEventListener("change", (event) => {
   if (event.target && event.target.id === "itemsPerPageSelect") {
-    console.log("通过事件委托检测到分页大小变更");
     handleItemsPerPageChange(event);
   }
 });
@@ -1612,10 +1603,8 @@ document.addEventListener("DOMContentLoaded", () => {
   setTimeout(() => {
     const itemsPerPageSelect = document.getElementById("itemsPerPageSelect");
     if (itemsPerPageSelect) {
-      console.log(`页面加载完成后检查分页选择器，当前值: ${itemsPerPageSelect.value}`);
       // 确保事件监听器已绑定
       if (!itemsPerPageSelect.hasAttribute('data-listener-bound')) {
-        console.log("重新绑定分页大小选择器事件监听器");
         itemsPerPageSelect.addEventListener("change", handleItemsPerPageChange);
         itemsPerPageSelect.setAttribute('data-listener-bound', 'true');
       }

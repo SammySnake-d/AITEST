@@ -538,7 +538,7 @@ async def get_keys_paginated(
 
         if page < 1:
             page = 1
-        if page_size < 1 or page_size > 100:
+        if page_size < 1 or page_size > 1000:
             page_size = 10
         if fail_count_threshold < 0:
             fail_count_threshold = 0
