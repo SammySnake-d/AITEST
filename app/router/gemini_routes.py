@@ -663,21 +663,13 @@ async def update_precheck_config(
             trigger_ratio=request.trigger_ratio
         )
 
-        # 同时更新全局settings
+        # 同时更新全局settings（简化版本，只更新核心参数）
         if request.enabled is not None:
             settings.KEY_PRECHECK_ENABLED = request.enabled
         if request.count is not None:
             settings.KEY_PRECHECK_COUNT = request.count
         if request.trigger_ratio is not None:
             settings.KEY_PRECHECK_TRIGGER_RATIO = request.trigger_ratio
-        if request.min_keys_multiplier is not None:
-            settings.KEY_PRECHECK_MIN_KEYS_MULTIPLIER = request.min_keys_multiplier
-        if request.estimated_concurrent is not None:
-            settings.KEY_PRECHECK_ESTIMATED_CONCURRENT_REQUESTS = request.estimated_concurrent
-        if request.dynamic_adjustment is not None:
-            settings.KEY_PRECHECK_DYNAMIC_ADJUSTMENT = request.dynamic_adjustment
-        if request.safety_buffer_ratio is not None:
-            settings.KEY_PRECHECK_SAFETY_BUFFER_RATIO = request.safety_buffer_ratio
         if request.min_reserve_ratio is not None:
             settings.KEY_PRECHECK_MIN_RESERVE_RATIO = request.min_reserve_ratio
 
