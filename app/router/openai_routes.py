@@ -142,7 +142,7 @@ async def get_keys_list(
     _=Depends(security_service.verify_auth_token),
     key_manager: KeyManager = Depends(get_key_manager),
 ):
-    """获取有效和无效的API key列表 (需要管理 Token 认证)。"""
+    """获取有效、无效和禁用的API key列表 (需要管理 Token 认证)。"""
     operation_name = "get_keys_list"
     async with handle_route_errors(logger, operation_name):
         logger.info("Handling keys list request")
@@ -152,8 +152,9 @@ async def get_keys_list(
             "data": {
                 "valid_keys": keys_status["valid_keys"],
                 "invalid_keys": keys_status["invalid_keys"],
+                "disabled_keys": keys_status["disabled_keys"],
             },
-            "total": len(keys_status["valid_keys"]) + len(keys_status["invalid_keys"]),
+            "total": len(keys_status["valid_keys"]) + len(keys_status["invalid_keys"]) + len(keys_status["disabled_keys"]),
         }
 
 

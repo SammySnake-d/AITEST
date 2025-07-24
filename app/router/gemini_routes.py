@@ -5,7 +5,10 @@ import asyncio
 from app.config.config import settings
 from app.log.logger import get_gemini_logger
 from app.core.security import SecurityService
-from app.domain.gemini_models import GeminiContent, GeminiRequest, ResetSelectedKeysRequest, VerifySelectedKeysRequest
+from app.domain.gemini_models import (
+    GeminiContent, GeminiRequest, ResetSelectedKeysRequest, VerifySelectedKeysRequest,
+    BatchSearchKeysRequest, BatchOperationKeysRequest, KeyFreezeRequest
+)
 from app.service.chat.gemini_chat_service import GeminiChatService
 from app.service.key.key_manager import KeyManager, get_key_manager_instance
 from app.service.tts.native.tts_routes import get_tts_chat_service
@@ -222,7 +225,8 @@ async def reset_all_key_fail_counts(key_type: str = None, key_manager: KeyManage
         keys_by_status = await key_manager.get_keys_by_status()
         valid_keys = keys_by_status.get("valid_keys", {})
         invalid_keys = keys_by_status.get("invalid_keys", {})
-        
+        disabled_keys = keys_by_status.get("disabled_keys", {})
+
         # 根据类型选择要重置的密钥
         keys_to_reset = []
         if key_type == "valid":
@@ -231,6 +235,9 @@ async def reset_all_key_fail_counts(key_type: str = None, key_manager: KeyManage
         elif key_type == "invalid":
             keys_to_reset = list(invalid_keys.keys())
             logger.info(f"Resetting only invalid keys, count: {len(keys_to_reset)}")
+        elif key_type == "disabled":
+            keys_to_reset = list(disabled_keys.keys())
+            logger.info(f"Resetting only disabled keys, count: {len(keys_to_reset)}")
         else:
             # 重置所有密钥
             await key_manager.reset_failure_counts()
@@ -436,3 +443,189 @@ async def verify_selected_keys(
             "valid_count": valid_count,
             "invalid_count": 0
         })
+
+
+@router.post("/batch-search-keys")
+async def batch_search_keys(
+    request: BatchSearchKeysRequest,
+    key_manager: KeyManager = Depends(get_key_manager)
+):
+    """批量搜索密钥"""
+    logger.info("-" * 50 + "batch_search_keys" + "-" * 50)
+
+    try:
+        # 解析输入的密钥
+        keys_input = request.keys_input.strip()
+        if not keys_input:
+            return JSONResponse({"success": False, "message": "请输入要搜索的密钥"}, status_code=400)
+
+        # 支持分号或换行分割
+        if ';' in keys_input:
+            search_keys = [key.strip() for key in keys_input.split(';') if key.strip()]
+        else:
+            search_keys = [key.strip() for key in keys_input.split('\n') if key.strip()]
+
+        if not search_keys:
+            return JSONResponse({"success": False, "message": "未找到有效的密钥"}, status_code=400)
+
+        # 获取所有密钥状态
+        keys_status = await key_manager.get_keys_by_status()
+        all_keys = {**keys_status["valid_keys"], **keys_status["invalid_keys"], **keys_status["disabled_keys"]}
+
+        # 搜索匹配的密钥
+        found_keys = {}
+        not_found_keys = []
+
+        for search_key in search_keys:
+            if search_key in all_keys:
+                key_info = all_keys[search_key]
+                # 判断密钥状态
+                if isinstance(key_info, dict):
+                    fail_count = key_info.get("fail_count", 0)
+                    disabled = key_info.get("disabled", False)
+                    frozen = key_info.get("frozen", False)
+                else:
+                    # 兼容旧格式
+                    fail_count = key_info
+                    disabled = await key_manager.is_key_disabled(search_key)
+                    frozen = await key_manager.is_key_frozen(search_key)
+
+                status = "valid" if fail_count < key_manager.MAX_FAILURES and not disabled else "invalid"
+                found_keys[search_key] = {
+                    "status": status,
+                    "fail_count": fail_count,
+                    "disabled": disabled,
+                    "frozen": frozen
+                }
+            else:
+                not_found_keys.append(search_key)
+
+        return JSONResponse({
+            "success": True,
+            "message": f"搜索完成，找到 {len(found_keys)} 个密钥",
+            "found_keys": found_keys,
+            "not_found_keys": not_found_keys,
+            "search_count": len(search_keys),
+            "found_count": len(found_keys)
+        })
+    except Exception as e:
+        logger.error(f"Failed to search keys: {str(e)}")
+        return JSONResponse({"success": False, "message": f"搜索失败: {str(e)}"}, status_code=500)
+
+
+@router.post("/batch-operation-keys")
+async def batch_operation_keys(
+    request: BatchOperationKeysRequest,
+    key_manager: KeyManager = Depends(get_key_manager)
+):
+    """批量启用/禁用密钥"""
+    logger.info("-" * 50 + "batch_operation_keys" + "-" * 50)
+
+    try:
+        keys = request.keys
+        operation = request.operation
+        key_type = request.key_type or "gemini"
+
+        if not keys:
+            return JSONResponse({"success": False, "message": "请提供要操作的密钥"}, status_code=400)
+
+        logger.info(f"Performing {operation} operation on {len(keys)} {key_type} keys")
+
+        results = {}
+        success_count = 0
+
+        for key in keys:
+            try:
+                if key_type == "vertex":
+                    if operation == "enable":
+                        result = await key_manager.enable_vertex_key(key)
+                    else:  # disable
+                        result = await key_manager.disable_vertex_key(key)
+                else:  # gemini
+                    if operation == "enable":
+                        result = await key_manager.enable_key(key)
+                    else:  # disable
+                        result = await key_manager.disable_key(key)
+
+                results[key] = result
+                if result:
+                    success_count += 1
+            except Exception as e:
+                logger.error(f"Error {operation} key {key}: {str(e)}")
+                results[key] = False
+
+        operation_text = "启用" if operation == "enable" else "禁用"
+        return JSONResponse({
+            "success": True,
+            "message": f"批量{operation_text}完成，成功处理 {success_count}/{len(keys)} 个密钥",
+            "results": results,
+            "success_count": success_count,
+            "total_count": len(keys)
+        })
+    except Exception as e:
+        logger.error(f"Failed to perform batch operation: {str(e)}")
+        return JSONResponse({"success": False, "message": f"批量操作失败: {str(e)}"}, status_code=500)
+
+
+@router.post("/freeze-key")
+async def freeze_key(
+    request: KeyFreezeRequest,
+    key_manager: KeyManager = Depends(get_key_manager)
+):
+    """冷冻指定密钥"""
+    logger.info("-" * 50 + "freeze_key" + "-" * 50)
+
+    try:
+        key = request.key
+        duration_seconds = request.duration_seconds
+        key_type = request.key_type or "gemini"
+
+        logger.info(f"Freezing {key_type} key: {key} for {duration_seconds or 'default'} seconds")
+
+        if key_type == "vertex":
+            result = await key_manager.freeze_vertex_key(key, duration_seconds)
+        else:  # gemini
+            result = await key_manager.freeze_key(key, duration_seconds)
+
+        if result:
+            freeze_duration = duration_seconds or settings.KEY_FREEZE_DURATION_SECONDS
+            return JSONResponse({
+                "success": True,
+                "message": f"密钥已冷冻 {freeze_duration} 秒"
+            })
+        else:
+            return JSONResponse({"success": False, "message": "密钥冷冻失败"}, status_code=400)
+    except Exception as e:
+        logger.error(f"Failed to freeze key: {str(e)}")
+        return JSONResponse({"success": False, "message": f"冷冻失败: {str(e)}"}, status_code=500)
+
+
+@router.post("/unfreeze-key")
+async def unfreeze_key(
+    request: KeyFreezeRequest,
+    key_manager: KeyManager = Depends(get_key_manager)
+):
+    """解冻指定密钥"""
+    logger.info("-" * 50 + "unfreeze_key" + "-" * 50)
+
+    try:
+        key = request.key
+        key_type = request.key_type or "gemini"
+
+        logger.info(f"Unfreezing {key_type} key: {key}")
+
+        if key_type == "vertex":
+            result = await key_manager.unfreeze_vertex_key(key)
+        else:  # gemini
+            result = await key_manager.unfreeze_key(key)
+
+        if result:
+            return JSONResponse({
+                "success": True,
+                "message": "密钥已解冻"
+            })
+        else:
+            return JSONResponse({"success": False, "message": "密钥未处于冷冻状态或解冻失败"}, status_code=400)
+    except Exception as e:
+        logger.error(f"Failed to unfreeze key: {str(e)}")
+        return JSONResponse({"success": False, "message": f"解冻失败: {str(e)}"}, status_code=500)

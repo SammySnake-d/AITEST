@@ -168,7 +168,8 @@ function toggleSelectAll(type, isChecked) {
 
       // Sync with master array
       const key = listItem.dataset.key;
-      const masterList = type === "valid" ? allValidKeys : allInvalidKeys;
+      const masterList = type === "valid" ? allValidKeys :
+                        type === "invalid" ? allInvalidKeys : allDisabledKeys;
       if (masterList) {
         // Ensure masterList is defined
         const masterListItem = masterList.find((li) => li.dataset.key === key);
@@ -610,10 +611,11 @@ async function executeResetAll(type) {
     const resetButton = document.querySelector(
       `button[data-reset-type="${type}"]`
     );
+    const typeText = type === "valid" ? "有效" : type === "invalid" ? "无效" : "已禁用";
     if (!resetButton) {
       showResultModal(
         false,
-        `找不到${type === "valid" ? "有效" : "无效"}密钥区域的批量重置按钮`,
+        `找不到${typeText}密钥区域的批量重置按钮`,
         false
       ); // Don't reload if button not found
       return;
@@ -624,7 +626,7 @@ async function executeResetAll(type) {
 
     if (keysToReset.length === 0) {
       showNotification(
-        `没有选中的${type === "valid" ? "有效" : "无效"}密钥可重置`,
+        `没有选中的${typeText}密钥可重置`,
         "warning"
       );
       return;
@@ -650,9 +652,7 @@ async function executeResetAll(type) {
       if (data.success) {
         const message =
           data.reset_count !== undefined
-            ? `成功重置 ${data.reset_count} 个选中的${
-                type === "valid" ? "有效" : "无效"
-              }密钥的失败次数`
+            ? `成功重置 ${data.reset_count} 个选中的${typeText}密钥的失败次数`
             : `成功重置 ${keysToReset.length} 个选中的密钥`;
         showResultModal(true, message); // 成功后刷新页面
       } else {
@@ -944,8 +944,9 @@ function initializeGlobalBatchVerificationHandlers() {
       }
       const keysToVerify = getSelectedKeys(type);
       if (keysToVerify.length === 0) {
+        const typeText = type === "valid" ? "有效" : type === "invalid" ? "无效" : "已禁用";
         showNotification(
-          `没有选中的${type === "valid" ? "有效" : "无效"}密钥可验证`,
+          `没有选中的${typeText}密钥可验证`,
           "warning"
         );
         if (verifyButton) {
@@ -1033,7 +1034,8 @@ function initializeKeySelectionListeners() {
           // Sync with master array
           const key = listItem.dataset.key;
           const masterList =
-            keyType === "valid" ? allValidKeys : allInvalidKeys;
+            keyType === "valid" ? allValidKeys :
+            keyType === "invalid" ? allInvalidKeys : allDisabledKeys;
           if (masterList) {
             // Ensure masterList is defined
             const masterListItem = masterList.find(
@@ -1103,14 +1105,17 @@ function initializeAutoRefreshControls() {
 // These variables are used by pagination and search, define them in a scope accessible by initializeKeyPaginationAndSearch
 let allValidKeys = [];
 let allInvalidKeys = [];
+let allDisabledKeys = [];
 let filteredValidKeys = [];
 let itemsPerPage = 10; // Default
 let validCurrentPage = 1; // Also used by displayPage
 let invalidCurrentPage = 1; // Also used by displayPage
+let disabledCurrentPage = 1; // Also used by displayPage
 
 function initializeKeyPaginationAndSearch() {
   const validKeysListElement = document.getElementById("validKeys");
   const invalidKeysListElement = document.getElementById("invalidKeys");
+  const disabledKeysListElement = document.getElementById("disabledKeys");
   const searchInput = document.getElementById("keySearchInput");
   const itemsPerPageSelect = document.getElementById("itemsPerPageSelect");
   const thresholdInput = document.getElementById("failCountThreshold"); // Already used by initializeKeyFilterControls
@@ -1138,6 +1143,17 @@ function initializeKeyPaginationAndSearch() {
       }
     });
   }
+  if (disabledKeysListElement) {
+    allDisabledKeys = Array.from(
+      disabledKeysListElement.querySelectorAll("li[data-key]")
+    );
+    allDisabledKeys.forEach((li) => {
+      const keyTextSpan = li.querySelector(".key-text");
+      if (keyTextSpan && keyTextSpan.dataset.fullKey) {
+        li.dataset.key = keyTextSpan.dataset.fullKey;
+      }
+    });
+  }
 
   if (itemsPerPageSelect) {
     itemsPerPage = parseInt(itemsPerPageSelect.value, 10); // Initialize itemsPerPage
@@ -1145,12 +1161,14 @@ function initializeKeyPaginationAndSearch() {
       itemsPerPage = parseInt(itemsPerPageSelect.value, 10);
       filterAndSearchValidKeys(); // Re-filter and display page 1 for valid keys
       displayPage("invalid", 1, allInvalidKeys); // Reset invalid keys to page 1
+      displayPage("disabled", 1, allDisabledKeys); // Reset disabled keys to page 1
     });
   }
 
   // Initial display calls
   filterAndSearchValidKeys();
   displayPage("invalid", 1, allInvalidKeys);
+  displayPage("disabled", 1, allDisabledKeys);
 
   // Event listeners for search and filter (thresholdInput listener is in initializeKeyFilterControls)
   if (searchInput) {
@@ -1847,4 +1865,228 @@ function filterAndSearchValidKeys() {
   // Reset to the first page after filtering/searching
   validCurrentPage = 1;
   displayPage("valid", validCurrentPage, filteredValidKeys);
+}
+
+// --- 批量搜索功能 ---
+
+// 全局变量存储搜索结果
+let batchSearchResults = {
+  foundKeys: {},
+  notFoundKeys: [],
+  selectedKeys: new Set()
+};
+
+/**
+ * 显示批量搜索模态框
+ */
+function showBatchSearchModal() {
+  const modal = document.getElementById('batchSearchModal');
+  const input = document.getElementById('batchSearchInput');
+
+  // 清空输入框
+  input.value = '';
+
+  // 显示模态框
+  modal.classList.remove('hidden');
+
+  // 聚焦到输入框
+  setTimeout(() => {
+    input.focus();
+  }, 100);
+}
+
+/**
+ * 关闭批量搜索模态框
+ */
+function closeBatchSearchModal() {
+  const modal = document.getElementById('batchSearchModal');
+  modal.classList.add('hidden');
+}
+
+/**
+ * 执行批量搜索
+ */
+async function performBatchSearch() {
+  const input = document.getElementById('batchSearchInput');
+  const keysInput = input.value.trim();
+
+  if (!keysInput) {
+    showNotification('请输入要搜索的密钥', 'error');
+    return;
+  }
+
+  try {
+    // 调用后端API进行搜索
+    const response = await fetchAPI('/gemini/v1beta/batch-search-keys', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        keys_input: keysInput
+      })
+    });
+
+    if (response.success) {
+      // 保存搜索结果
+      batchSearchResults.foundKeys = response.found_keys;
+      batchSearchResults.notFoundKeys = response.not_found_keys;
+      batchSearchResults.selectedKeys.clear();
+
+      // 关闭搜索模态框
+      closeBatchSearchModal();
+
+      // 显示搜索结果
+      showBatchSearchResults(response);
+    } else {
+      showNotification(response.message || '搜索失败', 'error');
+    }
+  } catch (error) {
+    console.error('Batch search error:', error);
+    showNotification('搜索失败: ' + error.message, 'error');
+  }
+}
+
+/**
+ * 显示批量搜索结果模态框
+ */
+function showBatchSearchResults(searchResponse) {
+  const modal = document.getElementById('batchSearchResultModal');
+  const content = document.getElementById('batchSearchResultContent');
+
+  // 更新统计信息
+  document.getElementById('totalSearchCount').textContent = searchResponse.search_count;
+  document.getElementById('foundKeysCount').textContent = searchResponse.found_count;
+  document.getElementById('notFoundKeysCount').textContent = searchResponse.not_found_keys.length;
+
+  // 生成搜索结果HTML
+  let html = '';
+
+  // 找到的密钥
+  if (Object.keys(searchResponse.found_keys).length > 0) {
+    html += '<div class="mb-6">';
+    html += '<h4 class="text-lg font-semibold text-green-600 mb-3"><i class="fas fa-check-circle mr-2"></i>找到的密钥</h4>';
+    html += '<div class="grid grid-cols-1 gap-3">';
+
+    for (const [key, info] of Object.entries(searchResponse.found_keys)) {
+      const statusClass = info.status === 'valid' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200';
+      const statusIcon = info.status === 'valid' ? 'fa-check-circle text-green-500' : 'fa-times-circle text-red-500';
+      const statusText = info.status === 'valid' ? '有效' : '无效';
+
+      // 状态标签
+      let statusBadges = `<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${info.status === 'valid' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+        <i class="fas ${statusIcon} mr-1"></i>${statusText}
+      </span>`;
+
+      if (info.disabled) {
+        statusBadges += ' <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800"><i class="fas fa-ban mr-1"></i>已禁用</span>';
+      }
+
+      if (info.frozen) {
+        statusBadges += ' <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><i class="fas fa-snowflake mr-1"></i>已冷冻</span>';
+      }
+
+      html += `
+        <div class="border rounded-lg p-3 ${statusClass}">
+          <div class="flex items-start gap-3">
+            <input type="checkbox" class="mt-1 found-key-checkbox" value="${key}" onchange="updateFoundKeySelection()">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-2">
+                ${statusBadges}
+                <span class="text-xs text-gray-500">失败次数: ${info.fail_count}</span>
+              </div>
+              <div class="font-mono text-sm text-gray-700 break-all">${key}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    html += '</div></div>';
+  }
+
+  // 未找到的密钥
+  if (searchResponse.not_found_keys.length > 0) {
+    html += '<div>';
+    html += '<h4 class="text-lg font-semibold text-red-600 mb-3"><i class="fas fa-exclamation-triangle mr-2"></i>未找到的密钥</h4>';
+    html += '<div class="bg-red-50 border border-red-200 rounded-lg p-3">';
+    html += '<div class="text-sm text-red-700">';
+
+    for (const key of searchResponse.not_found_keys) {
+      html += `<div class="font-mono break-all mb-1">${key}</div>`;
+    }
+
+    html += '</div></div></div>';
+  }
+
+  content.innerHTML = html;
+
+  // 重置选择状态
+  updateFoundKeySelection();
+
+  // 显示模态框
+  modal.classList.remove('hidden');
+}
+
+// 启用单个密钥
+async function enableKey(key, button) {
+  try {
+    // 禁用按钮并显示加载状态
+    button.disabled = true;
+    const originalHtml = button.innerHTML;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 启用中';
+
+    try {
+      const data = await fetchAPI(`/api/config/keys/${key}/enable`, {
+        method: "POST",
+      });
+
+      if (data.success) {
+        // 使用 resultModal 并确保刷新
+        showResultModal(true, data.message || "密钥启用成功", true);
+      } else {
+        // 使用 resultModal，失败时不刷新，以便用户看到错误信息
+        showResultModal(false, data.message || "密钥启用失败", false);
+        button.innerHTML = originalHtml;
+        button.disabled = false;
+      }
+    } catch (apiError) {
+      console.error("密钥启用 API 请求失败:", apiError);
+      showResultModal(false, `启用请求失败: ${apiError.message}`, false);
+      button.innerHTML = originalHtml;
+      button.disabled = false;
+    }
+  } catch (error) {
+    console.error("启用失败:", error);
+    showResultModal(false, "启用处理失败: " + error.message, false);
+  }
+}
+
+// 批量启用密钥
+async function batchEnableKeys(type) {
+  const selectedKeys = getSelectedKeys(type);
+
+  if (selectedKeys.length === 0) {
+    showNotification("没有选中的密钥可启用", "warning");
+    return;
+  }
+
+  try {
+    const data = await fetchAPI(`/api/config/keys/batch-enable`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ keys: selectedKeys }),
+    });
+
+    if (data.success) {
+      showResultModal(true, `成功启用 ${data.success_count} 个密钥`, true);
+    } else {
+      showResultModal(false, data.message || "批量启用失败", false);
+    }
+  } catch (error) {
+    console.error("批量启用失败:", error);
+    showResultModal(false, "批量启用请求失败: " + error.message, false);
+  }
 }

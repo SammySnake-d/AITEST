@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     VERTEX_API_KEYS: List[str] = []
     VERTEX_EXPRESS_BASE_URL: str = "https://aiplatform.googleapis.com/v1beta1/publishers/google"
 
+    # 密钥冷冻配置
+    KEY_FREEZE_DURATION_SECONDS: int = 65  # 429错误后密钥冷冻时间（秒）
+    ENABLE_KEY_FREEZE_ON_429: bool = True  # 是否启用429错误自动冷冻功能
+
     # 智能路由配置
     URL_NORMALIZATION_ENABLED: bool = False  # 是否启用智能路由映射功能
 

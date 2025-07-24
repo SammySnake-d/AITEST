@@ -1,6 +1,7 @@
 import asyncio
 from itertools import cycle
-from typing import Dict, Union
+from typing import Dict, Union, List, Optional
+from datetime import datetime, timedelta
 
 from app.config.config import settings
 from app.log.logger import get_key_manager_logger
@@ -25,6 +26,14 @@ class KeyManager:
         self.MAX_FAILURES = settings.MAX_FAILURES
         self.paid_key = settings.PAID_KEY
 
+        # 密钥状态管理
+        self.disabled_keys: set = set()  # 禁用的密钥
+        self.disabled_vertex_keys: set = set()  # 禁用的Vertex密钥
+        self.frozen_keys: Dict[str, datetime] = {}  # 冷冻的密钥及其解冻时间
+        self.frozen_vertex_keys: Dict[str, datetime] = {}  # 冷冻的Vertex密钥及其解冻时间
+        self.key_state_lock = asyncio.Lock()  # 密钥状态锁
+        self.vertex_key_state_lock = asyncio.Lock()  # Vertex密钥状态锁
+
     async def get_paid_key(self) -> str:
         return self.paid_key
 
@@ -39,12 +48,30 @@ class KeyManager:
             return next(self.vertex_key_cycle)
 
     async def is_key_valid(self, key: str) -> bool:
-        """检查key是否有效"""
+        """检查key是否有效（考虑失败次数、禁用状态和冷冻状态）"""
+        # 检查是否被禁用
+        if await self.is_key_disabled(key):
+            return False
+
+        # 检查是否被冷冻
+        if await self.is_key_frozen(key):
+            return False
+
+        # 检查失败次数
         async with self.failure_count_lock:
             return self.key_failure_counts[key] < self.MAX_FAILURES
 
     async def is_vertex_key_valid(self, key: str) -> bool:
-        """检查 Vertex key 是否有效"""
+        """检查 Vertex key 是否有效（考虑失败次数、禁用状态和冷冻状态）"""
+        # 检查是否被禁用
+        if await self.is_vertex_key_disabled(key):
+            return False
+
+        # 检查是否被冷冻
+        if await self.is_vertex_key_frozen(key):
+            return False
+
+        # 检查失败次数
         async with self.vertex_failure_count_lock:
             return self.vertex_key_failure_counts[key] < self.MAX_FAILURES
 
@@ -131,6 +158,10 @@ class KeyManager:
                 logger.warning(
                     f"Vertex Express API key {api_key} has failed {self.MAX_FAILURES} times"
                 )
+        if retries < settings.MAX_RETRIES:
+            return await self.get_next_working_vertex_key()
+        else:
+            return ""
 
     def get_fail_count(self, key: str) -> int:
         """获取指定密钥的失败次数"""
@@ -141,19 +172,40 @@ class KeyManager:
         return self.vertex_key_failure_counts.get(key, 0)
 
     async def get_keys_by_status(self) -> dict:
-        """获取分类后的API key列表，包括失败次数"""
+        """获取分类后的API key列表，包括失败次数和状态信息"""
         valid_keys = {}
         invalid_keys = {}
+        disabled_keys = {}
 
         async with self.failure_count_lock:
             for key in self.api_keys:
                 fail_count = self.key_failure_counts[key]
-                if fail_count < self.MAX_FAILURES:
-                    valid_keys[key] = fail_count
-                else:
-                    invalid_keys[key] = fail_count
 
-        return {"valid_keys": valid_keys, "invalid_keys": invalid_keys}
+                # 获取密钥状态信息
+                is_disabled = await self.is_key_disabled(key)
+                is_frozen = await self.is_key_frozen(key)
+
+                key_info = {
+                    "fail_count": fail_count,
+                    "disabled": is_disabled,
+                    "frozen": is_frozen
+                }
+
+                if is_disabled:
+                    # 禁用的密钥单独分类
+                    disabled_keys[key] = key_info
+                elif fail_count < self.MAX_FAILURES:
+                    # 有效密钥（未禁用且失败次数未达到上限）
+                    valid_keys[key] = key_info
+                else:
+                    # 无效密钥（失败次数达到上限但未被禁用）
+                    invalid_keys[key] = key_info
+
+        return {
+            "valid_keys": valid_keys,
+            "invalid_keys": invalid_keys,
+            "disabled_keys": disabled_keys
+        }
 
     async def get_vertex_keys_by_status(self) -> dict:
         """获取分类后的 Vertex Express API key 列表，包括失败次数"""
@@ -168,6 +220,175 @@ class KeyManager:
                 else:
                     invalid_keys[key] = fail_count
         return {"valid_keys": valid_keys, "invalid_keys": invalid_keys}
+
+    # 密钥冷冻管理方法
+    async def freeze_key(self, key: str, duration_seconds: Optional[int] = None) -> bool:
+        """冷冻指定密钥"""
+        if duration_seconds is None:
+            duration_seconds = settings.KEY_FREEZE_DURATION_SECONDS
+
+        freeze_until = datetime.now() + timedelta(seconds=duration_seconds)
+        async with self.key_state_lock:
+            self.frozen_keys[key] = freeze_until
+            logger.info(f"Key {key} frozen until {freeze_until}")
+            return True
+
+    async def freeze_vertex_key(self, key: str, duration_seconds: Optional[int] = None) -> bool:
+        """冷冻指定Vertex密钥"""
+        if duration_seconds is None:
+            duration_seconds = settings.KEY_FREEZE_DURATION_SECONDS
+
+        freeze_until = datetime.now() + timedelta(seconds=duration_seconds)
+        async with self.vertex_key_state_lock:
+            self.frozen_vertex_keys[key] = freeze_until
+            logger.info(f"Vertex key {key} frozen until {freeze_until}")
+            return True
+
+    async def unfreeze_key(self, key: str) -> bool:
+        """解冻指定密钥"""
+        async with self.key_state_lock:
+            if key in self.frozen_keys:
+                del self.frozen_keys[key]
+                logger.info(f"Key {key} unfrozen")
+                return True
+            return False
+
+    async def unfreeze_vertex_key(self, key: str) -> bool:
+        """解冻指定Vertex密钥"""
+        async with self.vertex_key_state_lock:
+            if key in self.frozen_vertex_keys:
+                del self.frozen_vertex_keys[key]
+                logger.info(f"Vertex key {key} unfrozen")
+                return True
+            return False
+
+    async def is_key_frozen(self, key: str) -> bool:
+        """检查密钥是否被冷冻"""
+        async with self.key_state_lock:
+            if key not in self.frozen_keys:
+                return False
+
+            # 检查是否已过期，如果过期则自动解冻
+            if datetime.now() >= self.frozen_keys[key]:
+                del self.frozen_keys[key]
+                logger.info(f"Key {key} auto-unfrozen (freeze period expired)")
+                return False
+            return True
+
+    async def is_vertex_key_frozen(self, key: str) -> bool:
+        """检查Vertex密钥是否被冷冻"""
+        async with self.vertex_key_state_lock:
+            if key not in self.frozen_vertex_keys:
+                return False
+
+            # 检查是否已过期，如果过期则自动解冻
+            if datetime.now() >= self.frozen_vertex_keys[key]:
+                del self.frozen_vertex_keys[key]
+                logger.info(f"Vertex key {key} auto-unfrozen (freeze period expired)")
+                return False
+            return True
+
+    # 密钥禁用管理方法
+    async def disable_key(self, key: str) -> bool:
+        """禁用指定密钥"""
+        async with self.key_state_lock:
+            self.disabled_keys.add(key)
+            logger.info(f"Key {key} disabled")
+            return True
+
+    async def disable_vertex_key(self, key: str) -> bool:
+        """禁用指定Vertex密钥"""
+        async with self.vertex_key_state_lock:
+            self.disabled_vertex_keys.add(key)
+            logger.info(f"Vertex key {key} disabled")
+            return True
+
+    async def enable_key(self, key: str) -> bool:
+        """启用指定密钥"""
+        async with self.key_state_lock:
+            if key in self.disabled_keys:
+                self.disabled_keys.remove(key)
+                logger.info(f"Key {key} enabled")
+                return True
+            return False
+
+    async def enable_vertex_key(self, key: str) -> bool:
+        """启用指定Vertex密钥"""
+        async with self.vertex_key_state_lock:
+            if key in self.disabled_vertex_keys:
+                self.disabled_vertex_keys.remove(key)
+                logger.info(f"Vertex key {key} enabled")
+                return True
+            return False
+
+    async def is_key_disabled(self, key: str) -> bool:
+        """检查密钥是否被禁用"""
+        async with self.key_state_lock:
+            return key in self.disabled_keys
+
+    async def is_vertex_key_disabled(self, key: str) -> bool:
+        """检查Vertex密钥是否被禁用"""
+        async with self.vertex_key_state_lock:
+            return key in self.disabled_vertex_keys
+
+    # 批量操作方法
+    async def batch_disable_keys(self, keys: List[str]) -> Dict[str, bool]:
+        """批量禁用密钥"""
+        results = {}
+        for key in keys:
+            if key in self.api_keys:
+                results[key] = await self.disable_key(key)
+            else:
+                results[key] = False
+                logger.warning(f"Key {key} not found in api_keys")
+        return results
+
+    async def batch_enable_keys(self, keys: List[str]) -> Dict[str, bool]:
+        """批量启用密钥"""
+        results = {}
+        for key in keys:
+            if key in self.api_keys:
+                results[key] = await self.enable_key(key)
+            else:
+                results[key] = False
+                logger.warning(f"Key {key} not found in api_keys")
+        return results
+
+    async def batch_disable_vertex_keys(self, keys: List[str]) -> Dict[str, bool]:
+        """批量禁用Vertex密钥"""
+        results = {}
+        for key in keys:
+            if key in self.vertex_api_keys:
+                results[key] = await self.disable_vertex_key(key)
+            else:
+                results[key] = False
+                logger.warning(f"Vertex key {key} not found in vertex_api_keys")
+        return results
+
+    async def batch_enable_vertex_keys(self, keys: List[str]) -> Dict[str, bool]:
+        """批量启用Vertex密钥"""
+        results = {}
+        for key in keys:
+            if key in self.vertex_api_keys:
+                results[key] = await self.enable_vertex_key(key)
+            else:
+                results[key] = False
+                logger.warning(f"Vertex key {key} not found in vertex_api_keys")
+        return results
+
+    # 429错误特殊处理方法
+    async def handle_429_error(self, api_key: str, is_vertex: bool = False) -> bool:
+        """处理429错误，冷冻密钥而不是增加失败计数"""
+        if not settings.ENABLE_KEY_FREEZE_ON_429:
+            return False
+
+        if is_vertex:
+            await self.freeze_vertex_key(api_key)
+            logger.warning(f"Vertex key {api_key} frozen due to 429 error")
+        else:
+            await self.freeze_key(api_key)
+            logger.warning(f"Key {api_key} frozen due to 429 error")
+        return True
 
     async def get_first_valid_key(self) -> str:
         """获取第一个有效的API key"""
@@ -194,7 +415,7 @@ _preserved_vertex_next_key_in_cycle: Union[str, None] = None
 
 
 async def get_key_manager_instance(
-    api_keys: list = None, vertex_api_keys: list = None
+    api_keys: Optional[list] = None, vertex_api_keys: Optional[list] = None
 ) -> KeyManager:
     """
     获取 KeyManager 单例实例。

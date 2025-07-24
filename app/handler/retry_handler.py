@@ -34,7 +34,19 @@ class RetryHandler:
                     key_manager = kwargs.get("key_manager")
                     if key_manager:
                         old_key = kwargs.get(self.key_arg)
-                        new_key = await key_manager.handle_api_failure(old_key, retries)
+
+                        # 检查是否是429错误
+                        error_str = str(e)
+                        is_429_error = "429" in error_str or "Too Many Requests" in error_str or "quota" in error_str.lower()
+
+                        if is_429_error and settings.ENABLE_KEY_FREEZE_ON_429:
+                            # 对于429错误，冷冻密钥而不是增加失败计数
+                            await key_manager.handle_429_error(old_key)
+                            new_key = await key_manager.get_next_working_key()
+                        else:
+                            # 对于其他错误，使用正常的失败处理逻辑
+                            new_key = await key_manager.handle_api_failure(old_key, retries)
+
                         if new_key:
                             kwargs[self.key_arg] = new_key
                             logger.info(f"Switched to new API key: {new_key}")

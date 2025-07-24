@@ -195,6 +195,104 @@ class ConfigService:
             }
 
     @staticmethod
+    async def enable_key(key: str) -> Dict[str, Any]:
+        """启用单个密钥"""
+        try:
+            key_manager = await get_key_manager_instance()
+            success = await key_manager.enable_key(key)
+
+            if success:
+                logger.info(f"成功启用密钥: {key}")
+                return {"success": True, "message": f"密钥 {key} 已成功启用"}
+            else:
+                logger.warning(f"启用密钥失败: {key}")
+                return {"success": False, "message": f"启用密钥 {key} 失败"}
+        except Exception as e:
+            logger.error(f"启用密钥时发生错误: {e}", exc_info=True)
+            return {"success": False, "message": f"启用密钥时发生错误: {str(e)}"}
+
+    @staticmethod
+    async def disable_key(key: str) -> Dict[str, Any]:
+        """禁用单个密钥"""
+        try:
+            key_manager = await get_key_manager_instance()
+            success = await key_manager.disable_key(key)
+
+            if success:
+                logger.info(f"成功禁用密钥: {key}")
+                return {"success": True, "message": f"密钥 {key} 已成功禁用"}
+            else:
+                logger.warning(f"禁用密钥失败: {key}")
+                return {"success": False, "message": f"禁用密钥 {key} 失败"}
+        except Exception as e:
+            logger.error(f"禁用密钥时发生错误: {e}", exc_info=True)
+            return {"success": False, "message": f"禁用密钥时发生错误: {str(e)}"}
+
+    @staticmethod
+    async def batch_enable_keys(keys: List[str]) -> Dict[str, Any]:
+        """批量启用密钥"""
+        try:
+            key_manager = await get_key_manager_instance()
+            results = await key_manager.batch_enable_keys(keys)
+
+            success_count = sum(1 for success in results.values() if success)
+            failed_count = len(keys) - success_count
+
+            if success_count > 0:
+                logger.info(f"成功启用 {success_count} 个密钥，失败 {failed_count} 个")
+                return {
+                    "success": True,
+                    "message": f"成功启用 {success_count} 个密钥",
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "results": results
+                }
+            else:
+                logger.warning("所有密钥启用失败")
+                return {
+                    "success": False,
+                    "message": "所有密钥启用失败",
+                    "success_count": 0,
+                    "failed_count": failed_count,
+                    "results": results
+                }
+        except Exception as e:
+            logger.error(f"批量启用密钥时发生错误: {e}", exc_info=True)
+            return {"success": False, "message": f"批量启用密钥时发生错误: {str(e)}"}
+
+    @staticmethod
+    async def batch_disable_keys(keys: List[str]) -> Dict[str, Any]:
+        """批量禁用密钥"""
+        try:
+            key_manager = await get_key_manager_instance()
+            results = await key_manager.batch_disable_keys(keys)
+
+            success_count = sum(1 for success in results.values() if success)
+            failed_count = len(keys) - success_count
+
+            if success_count > 0:
+                logger.info(f"成功禁用 {success_count} 个密钥，失败 {failed_count} 个")
+                return {
+                    "success": True,
+                    "message": f"成功禁用 {success_count} 个密钥",
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "results": results
+                }
+            else:
+                logger.warning("所有密钥禁用失败")
+                return {
+                    "success": False,
+                    "message": "所有密钥禁用失败",
+                    "success_count": 0,
+                    "failed_count": failed_count,
+                    "results": results
+                }
+        except Exception as e:
+            logger.error(f"批量禁用密钥时发生错误: {e}", exc_info=True)
+            return {"success": False, "message": f"批量禁用密钥时发生错误: {str(e)}"}
+
+    @staticmethod
     async def reset_config() -> Dict[str, Any]:
         """
         重置配置：优先从系统环境变量加载，然后从 .env 文件加载，

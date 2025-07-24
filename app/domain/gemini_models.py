@@ -80,3 +80,19 @@ class ResetSelectedKeysRequest(BaseModel):
 
 class VerifySelectedKeysRequest(BaseModel):
     keys: List[str]
+
+
+class BatchSearchKeysRequest(BaseModel):
+    keys_input: str  # 支持分号或换行分割的密钥输入
+
+
+class BatchOperationKeysRequest(BaseModel):
+    keys: List[str]
+    operation: Literal["enable", "disable"]  # 操作类型：启用或禁用
+    key_type: Optional[str] = "gemini"  # 密钥类型：gemini 或 vertex
+
+
+class KeyFreezeRequest(BaseModel):
+    key: str
+    duration_seconds: Optional[int] = None  # 冷冻时间，为空则使用默认配置
+    key_type: Optional[str] = "gemini"  # 密钥类型：gemini 或 vertex

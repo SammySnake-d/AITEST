@@ -470,7 +470,17 @@ class GeminiChatService:
                     request_msg=payload
                 )
 
-                api_key = await self.key_manager.handle_api_failure(current_attempt_key, retries)
+                # 检查是否是429错误
+                is_429_error = status_code == 429 or "429" in error_log_msg or "Too Many Requests" in error_log_msg or "quota" in error_log_msg.lower()
+
+                if is_429_error and settings.ENABLE_KEY_FREEZE_ON_429:
+                    # 对于429错误，冷冻密钥而不是增加失败计数
+                    await self.key_manager.handle_429_error(current_attempt_key)
+                    api_key = await self.key_manager.get_next_working_key()
+                else:
+                    # 对于其他错误，使用正常的失败处理逻辑
+                    api_key = await self.key_manager.handle_api_failure(current_attempt_key, retries)
+
                 if api_key:
                     logger.info(f"Switched to new API key: {api_key}")
                 else:

@@ -89,9 +89,10 @@ def setup_page_routes(app: FastAPI) -> None:
 
             key_manager = await get_key_manager_instance()
             keys_status = await key_manager.get_keys_by_status()
-            total_keys = len(keys_status["valid_keys"]) + len(keys_status["invalid_keys"])
+            total_keys = len(keys_status["valid_keys"]) + len(keys_status["invalid_keys"]) + len(keys_status["disabled_keys"])
             valid_key_count = len(keys_status["valid_keys"])
             invalid_key_count = len(keys_status["invalid_keys"])
+            disabled_key_count = len(keys_status["disabled_keys"])
 
             stats_service = StatsService()
             api_stats = await stats_service.get_api_usage_stats()
@@ -104,9 +105,11 @@ def setup_page_routes(app: FastAPI) -> None:
                     "request": request,
                     "valid_keys": keys_status["valid_keys"],
                     "invalid_keys": keys_status["invalid_keys"],
+                    "disabled_keys": keys_status["disabled_keys"],
                     "total_keys": total_keys,
                     "valid_key_count": valid_key_count,
                     "invalid_key_count": invalid_key_count,
+                    "disabled_key_count": disabled_key_count,
                     "api_stats": api_stats,
                 },
             )

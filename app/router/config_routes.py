@@ -59,6 +59,10 @@ class DeleteKeysRequest(BaseModel):
     keys: List[str] = Field(..., description="List of API keys to delete")
 
 
+class BatchKeysRequest(BaseModel):
+    keys: List[str] = Field(..., description="List of API keys to operate on")
+
+
 @router.delete("/keys/{key_to_delete}", response_model=Dict[str, Any])
 async def delete_single_key(key_to_delete: str, request: Request):
     auth_token = request.cookies.get("auth_token")
@@ -130,4 +134,104 @@ async def get_ui_models(request: Request):
         raise HTTPException(
             status_code=500,
             detail=f"An unexpected error occurred while fetching UI models: {str(e)}",
+        )
+
+
+@router.post("/keys/{key}/enable", response_model=Dict[str, Any])
+async def enable_single_key(key: str, request: Request):
+    """启用单个密钥"""
+    auth_token = request.cookies.get("auth_token")
+    if not auth_token or not verify_auth_token(auth_token):
+        logger.warning(f"Unauthorized attempt to enable key: {key}")
+        return RedirectResponse(url="/", status_code=302)
+    try:
+        logger.info(f"Attempting to enable key: {key}")
+        result = await ConfigService.enable_key(key)
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("message", "Failed to enable key"),
+            )
+        return result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error enabling key '{key}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error enabling key: {str(e)}")
+
+
+@router.post("/keys/{key}/disable", response_model=Dict[str, Any])
+async def disable_single_key(key: str, request: Request):
+    """禁用单个密钥"""
+    auth_token = request.cookies.get("auth_token")
+    if not auth_token or not verify_auth_token(auth_token):
+        logger.warning(f"Unauthorized attempt to disable key: {key}")
+        return RedirectResponse(url="/", status_code=302)
+    try:
+        logger.info(f"Attempting to disable key: {key}")
+        result = await ConfigService.disable_key(key)
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("message", "Failed to disable key"),
+            )
+        return result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error disabling key '{key}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error disabling key: {str(e)}")
+
+
+@router.post("/keys/batch-enable", response_model=Dict[str, Any])
+async def batch_enable_keys_route(
+    batch_request: BatchKeysRequest, request: Request
+):
+    """批量启用密钥"""
+    auth_token = request.cookies.get("auth_token")
+    if not auth_token or not verify_auth_token(auth_token):
+        logger.warning("Unauthorized attempt to batch enable keys")
+        return RedirectResponse(url="/", status_code=302)
+
+    if not batch_request.keys:
+        logger.warning("Attempt to batch enable keys with an empty list.")
+        raise HTTPException(status_code=400, detail="No keys provided for enabling.")
+
+    try:
+        logger.info(f"Attempting to batch enable {len(batch_request.keys)} keys.")
+        result = await ConfigService.batch_enable_keys(batch_request.keys)
+        return result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error batch enabling keys: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Error batch enabling keys: {str(e)}"
+        )
+
+
+@router.post("/keys/batch-disable", response_model=Dict[str, Any])
+async def batch_disable_keys_route(
+    batch_request: BatchKeysRequest, request: Request
+):
+    """批量禁用密钥"""
+    auth_token = request.cookies.get("auth_token")
+    if not auth_token or not verify_auth_token(auth_token):
+        logger.warning("Unauthorized attempt to batch disable keys")
+        return RedirectResponse(url="/", status_code=302)
+
+    if not batch_request.keys:
+        logger.warning("Attempt to batch disable keys with an empty list.")
+        raise HTTPException(status_code=400, detail="No keys provided for disabling.")
+
+    try:
+        logger.info(f"Attempting to batch disable {len(batch_request.keys)} keys.")
+        result = await ConfigService.batch_disable_keys(batch_request.keys)
+        return result
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error batch disabling keys: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail=f"Error batch disabling keys: {str(e)}"
         )
