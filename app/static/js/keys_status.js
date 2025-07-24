@@ -131,7 +131,6 @@ function updateBatchActions(type) {
 
   if (count > 0) {
     batchActionsDiv.classList.remove("hidden");
-    // 确保批量操作区域可见（HTML中已有flex类，这里只需要移除hidden）
     if (selectedCountSpan) {
       selectedCountSpan.textContent = count;
     }
@@ -173,53 +172,22 @@ function toggleSelectAll(type, isChecked) {
     return;
   }
 
-  // 使用更简单的选择器：直接选择所有复选框
-  const allCheckboxes = listElement.querySelectorAll('.key-checkbox');
+  // 使用简单的选择器：选择当前页面可见的复选框
+  // 在后端分页系统中，只需要处理当前页面的数据
+  const visibleCheckboxes = listElement.querySelectorAll(
+    `li:not([style*="display: none"]) .key-checkbox`
+  );
 
-  // 过滤出可见的复选框
-  const visibleCheckboxes = Array.from(allCheckboxes).filter(checkbox => {
-    const li = checkbox.closest('li');
-    if (!li) return false;
-
-    // 检查li是否被隐藏
-    const computedStyle = window.getComputedStyle(li);
-    const isHidden = li.style.display === 'none' ||
-                    computedStyle.display === 'none' ||
-                    li.style.visibility === 'hidden' ||
-                    computedStyle.visibility === 'hidden';
-
-    return !isHidden;
-  });
-
-  const checkboxesToUpdate = visibleCheckboxes.length > 0 ? visibleCheckboxes : allCheckboxes;
-
-  checkboxesToUpdate.forEach((checkbox) => {
+  visibleCheckboxes.forEach((checkbox) => {
     checkbox.checked = isChecked;
-    const listItem = checkbox.closest("li[data-key]"); // Get the LI from the current DOM
+    const listItem = checkbox.closest("li[data-key]");
     if (listItem) {
       listItem.classList.toggle("selected", isChecked);
-
-      // Sync with master array
-      const key = listItem.dataset.key;
-      const masterList = type === "valid" ? allValidKeys :
-                        type === "invalid" ? allInvalidKeys : allDisabledKeys;
-      if (masterList) {
-        // Ensure masterList is defined
-        const masterListItem = masterList.find((li) => li.dataset.key === key);
-        if (masterListItem) {
-          const masterCheckbox = masterListItem.querySelector(".key-checkbox");
-          if (masterCheckbox) {
-            masterCheckbox.checked = isChecked;
-          }
-        }
-      }
+      // 后端分页系统：每个页面的数据都是独立的，不需要同步主数组
     }
   });
 
-  // 确保DOM更新完成后再更新批量操作
-  setTimeout(() => {
-    updateBatchActions(type);
-  }, 10);
+  updateBatchActions(type);
 }
 
 // 复制选中的密钥
@@ -1119,27 +1087,7 @@ function initializeKeySelectionListeners() {
 
         if (listItem) {
           listItem.classList.toggle("selected", checkbox.checked);
-
-          // Sync with master array
-          const key = listItem.dataset.key;
-          const masterList =
-            keyType === "valid" ? allValidKeys :
-            keyType === "invalid" ? allInvalidKeys : allDisabledKeys;
-          if (masterList) {
-            // Ensure masterList is defined
-            const masterListItem = masterList.find(
-              (li) => li.dataset.key === key
-            );
-            if (masterListItem) {
-              const masterCheckbox =
-                masterListItem.querySelector(".key-checkbox");
-              if (masterCheckbox) {
-                masterCheckbox.checked = checkbox.checked;
-                // 同步主列表项的视觉状态
-                masterListItem.classList.toggle("selected", checkbox.checked);
-              }
-            }
-          }
+          // 后端分页系统：每个页面的数据都是独立的，不需要同步主数组
         }
         // 确保DOM更新完成后再更新批量操作
         setTimeout(() => {
