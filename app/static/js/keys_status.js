@@ -1044,6 +1044,8 @@ function initializeKeySelectionListeners() {
                 masterListItem.querySelector(".key-checkbox");
               if (masterCheckbox) {
                 masterCheckbox.checked = checkbox.checked;
+                // 同步主列表项的视觉状态
+                masterListItem.classList.toggle("selected", checkbox.checked);
               }
             }
           }
@@ -1055,6 +1057,7 @@ function initializeKeySelectionListeners() {
 
   setupEventListenersForList("validKeys", "valid");
   setupEventListenersForList("invalidKeys", "invalid");
+  setupEventListenersForList("disabledKeys", "disabled");
 }
 
 function initializeAutoRefreshControls() {
@@ -1502,8 +1505,9 @@ document.addEventListener("DOMContentLoaded", () => {
   registerServiceWorker();
 
   // Initial batch actions update might be needed if not covered by displayPage
-  // updateBatchActions('valid');
-  // updateBatchActions('invalid');
+  updateBatchActions('valid');
+  updateBatchActions('invalid');
+  updateBatchActions('disabled');
 });
 
 // --- 新增：删除密钥相关功能 ---
@@ -2377,6 +2381,35 @@ async function batchEnableKeys(type) {
   } catch (error) {
     console.error("批量启用失败:", error);
     showResultModal(false, "批量启用请求失败: " + error.message, false);
+  }
+}
+
+// 批量禁用密钥
+async function batchDisableKeys(type) {
+  const selectedKeys = getSelectedKeys(type);
+
+  if (selectedKeys.length === 0) {
+    showNotification("没有选中的密钥可禁用", "warning");
+    return;
+  }
+
+  try {
+    const data = await fetchAPI(`/api/config/keys/batch-disable`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ keys: selectedKeys }),
+    });
+
+    if (data.success) {
+      showResultModal(true, `成功禁用 ${data.success_count} 个密钥`, true);
+    } else {
+      showResultModal(false, data.message || "批量禁用失败", false);
+    }
+  } catch (error) {
+    console.error("批量禁用失败:", error);
+    showResultModal(false, "批量禁用请求失败: " + error.message, false);
   }
 }
 

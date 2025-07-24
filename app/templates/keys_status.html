@@ -305,19 +305,24 @@ endblock %} {% block head_extra_styles %}
   }
 
   #validKeys li.selected,
-  #invalidKeys li.selected {
+  #invalidKeys li.selected,
+  #disabledKeys li.selected {
     background-color: rgba(239, 246, 255, 0.95);
     border-color: rgba(59, 130, 246, 0.3);
   }
 
-  /* 隐藏原生复选框 */
+  /* 隐藏原生复选框但保持功能 */
   .key-checkbox {
-    display: none;
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+    z-index: -1;
   }
 
   /* 自定义复选框样式 */
   #validKeys li::before,
-  #invalidKeys li::before {
+  #invalidKeys li::before,
+  #disabledKeys li::before {
     content: "";
     position: absolute;
     left: 0.75rem;
@@ -332,14 +337,16 @@ endblock %} {% block head_extra_styles %}
   }
 
   #validKeys li.selected::before,
-  #invalidKeys li.selected::before {
+  #invalidKeys li.selected::before,
+  #disabledKeys li.selected::before {
     background-color: #3b82f6; /* blue-500 */
     border-color: #2563eb; /* blue-600 */
   }
 
   /* 自定义复选框对勾样式 */
   #validKeys li.selected::after,
-  #invalidKeys li.selected::after {
+  #invalidKeys li.selected::after,
+  #disabledKeys li.selected::after {
     content: "\f00c"; /* Font Awesome check icon */
     font-family: "Font Awesome 5 Free";
     font-weight: 900;
