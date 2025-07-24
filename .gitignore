@@ -259,3 +259,6 @@ $RECYCLE.BIN/
 
 tests/
 default_db
+
+
+*.log

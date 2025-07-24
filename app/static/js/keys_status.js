@@ -131,14 +131,20 @@ function updateBatchActions(type) {
 
   if (count > 0) {
     batchActionsDiv.classList.remove("hidden");
-    // 确保显示样式正确应用
-    batchActionsDiv.style.display = "";
+    // 强制设置显示样式，确保批量操作区域可见
+    batchActionsDiv.style.display = "flex";
+    batchActionsDiv.style.alignItems = "center";
+    batchActionsDiv.style.flexWrap = "wrap";
+    batchActionsDiv.style.gap = "0.75rem";
+    batchActionsDiv.style.visibility = "visible";
     if (selectedCountSpan) {
       selectedCountSpan.textContent = count;
     }
     buttons.forEach((button) => (button.disabled = false));
   } else {
     batchActionsDiv.classList.add("hidden");
+    batchActionsDiv.style.display = "none";
+    batchActionsDiv.style.visibility = "hidden";
     if (selectedCountSpan) {
       selectedCountSpan.textContent = "0";
     }
@@ -202,7 +208,11 @@ function toggleSelectAll(type, isChecked) {
       }
     }
   });
-  updateBatchActions(type);
+
+  // 确保DOM更新完成后再更新批量操作
+  setTimeout(() => {
+    updateBatchActions(type);
+  }, 10);
 }
 
 // 复制选中的密钥
@@ -1124,7 +1134,10 @@ function initializeKeySelectionListeners() {
             }
           }
         }
-        updateBatchActions(keyType);
+        // 确保DOM更新完成后再更新批量操作
+        setTimeout(() => {
+          updateBatchActions(keyType);
+        }, 10);
       }
     });
   };
@@ -2136,7 +2149,13 @@ function displayPageLegacy(type, page, keyItemsArray) {
     // Handle empty state for initially empty lists
     const emptyMsg = document.createElement("li");
     emptyMsg.className = "text-center text-gray-500 py-4 col-span-full";
-    emptyMsg.textContent = `暂无${type === "valid" ? "有效" : "无效"}密钥`;
+    let typeText = "无效";
+    if (type === "valid") {
+      typeText = "有效";
+    } else if (type === "disabled") {
+      typeText = "已禁用";
+    }
+    emptyMsg.textContent = `暂无${typeText}密钥`;
     listElement.appendChild(emptyMsg);
   }
 
