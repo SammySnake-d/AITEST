@@ -410,6 +410,12 @@ function closeResultModal(reload = true) {
       refreshDataOnly();
     }
   }
+
+  // 如果批量搜索结果模态框仍然打开，确保它保持在前台
+  const batchSearchResultModal = document.getElementById("batchSearchResultModal");
+  if (batchSearchResultModal && !batchSearchResultModal.classList.contains("hidden")) {
+    batchSearchResultModal.style.zIndex = '60';
+  }
 }
 
 // 显示操作结果模态框 (通用版本)
@@ -419,6 +425,9 @@ function showResultModal(success, message, autoReload = true) {
   const messageElement = document.getElementById("resultModalMessage");
   const iconElement = document.getElementById("resultIcon");
   const confirmButton = document.getElementById("resultModalConfirmBtn");
+
+  // 确保结果模态框在搜索结果模态框之上
+  modalElement.style.zIndex = '70';
 
   // 设置标题
   titleElement.textContent = success ? "操作成功" : "操作失败";
@@ -2763,7 +2772,7 @@ function updateFoundKeySelection() {
   }
 
   // 更新批量操作按钮状态
-  const batchButtons = document.querySelectorAll('#batchEnableFoundBtn, #batchDisableFoundBtn, #copyFoundBtn, #batchDeleteFoundBtn');
+  const batchButtons = document.querySelectorAll('#batchVerifyFoundBtn, #batchEnableFoundBtn, #batchDisableFoundBtn, #copyFoundBtn, #batchDeleteFoundBtn');
   batchButtons.forEach(button => {
     if (button) {
       button.disabled = selectedCount === 0;
@@ -2883,6 +2892,39 @@ async function batchOperationFoundKeys(operation) {
     await batchEnableFoundKeys();
   } else if (operation === 'disable') {
     await batchDisableFoundKeys();
+  } else if (operation === 'verify') {
+    await batchVerifyFoundKeys();
+  }
+}
+
+/**
+ * 批量验证搜索结果中选中的密钥
+ */
+async function batchVerifyFoundKeys() {
+  const selectedKeys = Array.from(batchSearchResults.selectedKeys);
+
+  if (selectedKeys.length === 0) {
+    showNotification("没有选中的密钥可验证", "warning");
+    return;
+  }
+
+  try {
+    const data = await fetchAPI(`/gemini/v1beta/verify-selected-keys`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ keys: selectedKeys }),
+    });
+
+    if (data.success) {
+      showResultModal(true, `成功验证 ${data.successful_keys.length} 个密钥，失败 ${Object.keys(data.failed_keys).length} 个密钥`, true);
+    } else {
+      showResultModal(false, data.message || "批量验证失败", false);
+    }
+  } catch (error) {
+    console.error("批量验证失败:", error);
+    showResultModal(false, "批量验证请求失败: " + error.message, false);
   }
 }
 

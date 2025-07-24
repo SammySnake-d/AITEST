@@ -1,0 +1,69 @@
+# docker-compose.yml for precheck testing
+# 专门用于验证预检机制的配置
+
+services:
+  gemini-balance:
+    image: ghcr.io/sammysnake-d/aitest:main
+    container_name: gemini-balance-aitest-precheck
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    env_file:
+      - .env
+    
+    # 覆盖默认启动命令，启用详细日志
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005", "--log-level", "info"]
+    
+    # 添加环境变量以启用预检机制和详细日志
+    environment:
+      - LOG_LEVEL=DEBUG
+      - KEY_PRECHECK_ENABLED=true
+      - KEY_PRECHECK_COUNT=50
+      - KEY_PRECHECK_TRIGGER_RATIO=0.67
+      - ENABLE_KEY_FREEZE_ON_429=true
+      - MAX_FAILURES=10
+    
+    healthcheck:
+      test: |
+        python -c "
+        import requests
+        import json
+        try:
+            # 检查基本健康状态
+            health_resp = requests.get('http://localhost:8005/health', timeout=5)
+            print(f'Health check: {health_resp.status_code}')
+            
+            # 检查预检配置状态
+            try:
+                precheck_resp = requests.get('http://localhost:8005/gemini/v1beta/precheck-config', timeout=5)
+                if precheck_resp.status_code == 200:
+                    config = precheck_resp.json()
+                    print(f'Precheck enabled: {config.get(\"enabled\", False)}')
+                    print(f'Precheck count: {config.get(\"count\", 0)}')
+                    print(f'Current batch size: {config.get(\"current_batch_size\", 0)}')
+                else:
+                    print(f'Precheck config check failed: {precheck_resp.status_code}')
+            except Exception as e:
+                print(f'Precheck config check error: {e}')
+            
+            exit(0) if health_resp.status_code == 200 else exit(1)
+        except Exception as e:
+            print(f'Health check failed: {e}')
+            exit(1)
+        "
+      interval: 60s  # 每分钟检查一次
+      timeout: 15s   # 增加超时时间
+      retries: 3
+      start_period: 60s  # 给预检机制足够的启动时间
+    
+    # 配置日志以便查看预检相关日志
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"  # 增加日志大小以捕获更多预检信息
+        max-file: "5"
+        
+    # 添加标签以便识别
+    labels:
+      - "purpose=precheck-testing"
+      - "version=enhanced"

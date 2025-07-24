@@ -30,10 +30,12 @@ class KeyManager:
         self.paid_key = settings.PAID_KEY
 
         # 密钥状态管理
-        self.disabled_keys: set = set()  # 禁用的密钥
-        self.disabled_vertex_keys: set = set()  # 禁用的Vertex密钥
-        self.frozen_keys: Dict[str, datetime] = {}  # 冷冻的密钥及其解冻时间
-        self.frozen_vertex_keys: Dict[str, datetime] = {}  # 冷冻的Vertex密钥及其解冻时间
+        self.disabled_keys: set = set()  # 禁用的密钥（保留兼容性）
+        self.disabled_vertex_keys: set = set()  # 禁用的Vertex密钥（保留兼容性）
+        self.frozen_keys: Dict[str, datetime] = {}  # 自动冻结的密钥及其解冻时间
+        self.frozen_vertex_keys: Dict[str, datetime] = {}  # 自动冻结的Vertex密钥及其解冻时间
+        self.manually_frozen_keys: set = set()  # 手动冻结的密钥（需要手动解冻）
+        self.manually_frozen_vertex_keys: set = set()  # 手动冻结的Vertex密钥（需要手动解冻）
         self.key_state_lock = asyncio.Lock()  # 密钥状态锁
         self.vertex_key_state_lock = asyncio.Lock()  # Vertex密钥状态锁
 
@@ -234,7 +236,7 @@ class KeyManager:
         """获取分类后的API key列表，包括失败次数和状态信息"""
         valid_keys = {}
         invalid_keys = {}
-        disabled_keys = {}
+        frozen_keys = {}
 
         async with self.failure_count_lock:
             for key in self.api_keys:
@@ -243,27 +245,32 @@ class KeyManager:
                 # 获取密钥状态信息
                 is_disabled = await self.is_key_disabled(key)
                 is_frozen = await self.is_key_frozen(key)
+                is_manually_frozen = key in self.manually_frozen_keys
+                freeze_until = self.frozen_keys.get(key)
 
                 key_info = {
                     "fail_count": fail_count,
-                    "disabled": is_disabled,
-                    "frozen": is_frozen
+                    "disabled": is_disabled,  # 保留兼容性
+                    "frozen": is_frozen,
+                    "manually_frozen": is_manually_frozen,
+                    "freeze_until": freeze_until.isoformat() if freeze_until else None
                 }
 
-                if is_disabled:
-                    # 禁用的密钥单独分类
-                    disabled_keys[key] = key_info
+                if is_frozen or is_disabled:
+                    # 冻结的密钥（包括手动冻结和自动冻结）
+                    frozen_keys[key] = key_info
                 elif fail_count < self.MAX_FAILURES:
-                    # 有效密钥（未禁用且失败次数未达到上限）
+                    # 有效密钥（未冻结且失败次数未达到上限）
                     valid_keys[key] = key_info
                 else:
-                    # 无效密钥（失败次数达到上限但未被禁用）
+                    # 无效密钥（失败次数达到上限但未被冻结）
                     invalid_keys[key] = key_info
 
         return {
             "valid_keys": valid_keys,
             "invalid_keys": invalid_keys,
-            "disabled_keys": disabled_keys
+            "disabled_keys": frozen_keys,  # 保留兼容性，实际是冻结列表
+            "frozen_keys": frozen_keys  # 新的冻结列表
         }
 
     async def get_keys_by_status_paginated(
@@ -283,8 +290,8 @@ class KeyManager:
             target_keys = all_keys_status["valid_keys"]
         elif key_type == "invalid":
             target_keys = all_keys_status["invalid_keys"]
-        elif key_type == "disabled":
-            target_keys = all_keys_status["disabled_keys"]
+        elif key_type == "disabled" or key_type == "frozen":
+            target_keys = all_keys_status["frozen_keys"]
         else:
             raise ValueError(f"Invalid key_type: {key_type}")
 
@@ -396,26 +403,43 @@ class KeyManager:
             return True
 
     async def unfreeze_key(self, key: str) -> bool:
-        """解冻指定密钥"""
+        """解冻指定密钥（包括自动冻结和手动冻结）"""
         async with self.key_state_lock:
+            unfrozen = False
             if key in self.frozen_keys:
                 del self.frozen_keys[key]
+                unfrozen = True
+            if key in self.manually_frozen_keys:
+                self.manually_frozen_keys.remove(key)
+                unfrozen = True
+            if unfrozen:
                 logger.info(f"Key {key} unfrozen")
                 return True
             return False
 
     async def unfreeze_vertex_key(self, key: str) -> bool:
-        """解冻指定Vertex密钥"""
+        """解冻指定Vertex密钥（包括自动冻结和手动冻结）"""
         async with self.vertex_key_state_lock:
+            unfrozen = False
             if key in self.frozen_vertex_keys:
                 del self.frozen_vertex_keys[key]
+                unfrozen = True
+            if key in self.manually_frozen_vertex_keys:
+                self.manually_frozen_vertex_keys.remove(key)
+                unfrozen = True
+            if unfrozen:
                 logger.info(f"Vertex key {key} unfrozen")
                 return True
             return False
 
     async def is_key_frozen(self, key: str) -> bool:
-        """检查密钥是否被冷冻"""
+        """检查密钥是否被冻结（包括自动冻结和手动冻结）"""
         async with self.key_state_lock:
+            # 检查手动冻结
+            if key in self.manually_frozen_keys:
+                return True
+
+            # 检查自动冻结
             if key not in self.frozen_keys:
                 return False
 
@@ -427,8 +451,13 @@ class KeyManager:
             return True
 
     async def is_vertex_key_frozen(self, key: str) -> bool:
-        """检查Vertex密钥是否被冷冻"""
+        """检查Vertex密钥是否被冻结（包括自动冻结和手动冻结）"""
         async with self.vertex_key_state_lock:
+            # 检查手动冻结
+            if key in self.manually_frozen_vertex_keys:
+                return True
+
+            # 检查自动冻结
             if key not in self.frozen_vertex_keys:
                 return False
 
@@ -439,48 +468,47 @@ class KeyManager:
                 return False
             return True
 
-    # 密钥禁用管理方法
-    async def disable_key(self, key: str) -> bool:
-        """禁用指定密钥"""
+    # 手动冻结管理方法
+    async def manually_freeze_key(self, key: str) -> bool:
+        """手动冻结指定密钥（需要手动解冻）"""
         async with self.key_state_lock:
-            self.disabled_keys.add(key)
-            logger.info(f"Key {key} disabled")
+            self.manually_frozen_keys.add(key)
+            logger.info(f"Key {key} manually frozen")
             return True
+
+    async def manually_freeze_vertex_key(self, key: str) -> bool:
+        """手动冻结指定Vertex密钥（需要手动解冻）"""
+        async with self.vertex_key_state_lock:
+            self.manually_frozen_vertex_keys.add(key)
+            logger.info(f"Vertex key {key} manually frozen")
+            return True
+
+    # 密钥禁用管理方法（保留兼容性，实际上映射到手动冻结）
+    async def disable_key(self, key: str) -> bool:
+        """禁用指定密钥（实际上是手动冻结）"""
+        return await self.manually_freeze_key(key)
 
     async def disable_vertex_key(self, key: str) -> bool:
-        """禁用指定Vertex密钥"""
-        async with self.vertex_key_state_lock:
-            self.disabled_vertex_keys.add(key)
-            logger.info(f"Vertex key {key} disabled")
-            return True
+        """禁用指定Vertex密钥（实际上是手动冻结）"""
+        return await self.manually_freeze_vertex_key(key)
 
     async def enable_key(self, key: str) -> bool:
-        """启用指定密钥"""
-        async with self.key_state_lock:
-            if key in self.disabled_keys:
-                self.disabled_keys.remove(key)
-                logger.info(f"Key {key} enabled")
-                return True
-            return False
+        """启用指定密钥（实际上是解冻）"""
+        return await self.unfreeze_key(key)
 
     async def enable_vertex_key(self, key: str) -> bool:
-        """启用指定Vertex密钥"""
-        async with self.vertex_key_state_lock:
-            if key in self.disabled_vertex_keys:
-                self.disabled_vertex_keys.remove(key)
-                logger.info(f"Vertex key {key} enabled")
-                return True
-            return False
+        """启用指定Vertex密钥（实际上是解冻）"""
+        return await self.unfreeze_vertex_key(key)
 
     async def is_key_disabled(self, key: str) -> bool:
-        """检查密钥是否被禁用"""
+        """检查密钥是否被禁用（兼容性方法，实际检查是否被手动冻结）"""
         async with self.key_state_lock:
-            return key in self.disabled_keys
+            return key in self.manually_frozen_keys or key in self.disabled_keys
 
     async def is_vertex_key_disabled(self, key: str) -> bool:
-        """检查Vertex密钥是否被禁用"""
+        """检查Vertex密钥是否被禁用（兼容性方法，实际检查是否被手动冻结）"""
         async with self.vertex_key_state_lock:
-            return key in self.disabled_vertex_keys
+            return key in self.manually_frozen_vertex_keys or key in self.disabled_vertex_keys
 
     # 批量操作方法
     async def batch_disable_keys(self, keys: List[str]) -> Dict[str, bool]:
@@ -853,11 +881,8 @@ class KeyManager:
 
             if not is_valid:
                 logger.warning(f"Precheck detected invalid key: {redact_key_for_logging(key)} at position {position}")
-                # 增加失败计数
-                async with self.failure_count_lock:
-                    self.key_failure_counts[key] += 1
-                    if self.key_failure_counts[key] >= self.MAX_FAILURES:
-                        logger.warning(f"Key {redact_key_for_logging(key)} marked as invalid after precheck (fail count: {self.key_failure_counts[key]})")
+                # _validate_key_with_api 已经处理了429错误的冻结和400等错误的标记无效
+                # 这里不需要再次处理
                 return False
             else:
                 logger.debug(f"Precheck confirmed key validity: {redact_key_for_logging(key)} at position {position}")
@@ -891,6 +916,17 @@ class KeyManager:
                         if settings.ENABLE_KEY_FREEZE_ON_429:
                             await self.freeze_key(key)
                             logger.warning(f"Key {redact_key_for_logging(key)} frozen due to 429 error during precheck")
+                        else:
+                            # 如果不启用冻结功能，则标记为无效
+                            async with self.failure_count_lock:
+                                self.key_failure_counts[key] = self.MAX_FAILURES
+                                logger.warning(f"Key {redact_key_for_logging(key)} marked as invalid due to 429 error (freeze disabled)")
+                        return False
+                    elif response.status in [400, 401, 403]:
+                        # 400等错误，立即标记为无效
+                        async with self.failure_count_lock:
+                            self.key_failure_counts[key] = self.MAX_FAILURES
+                            logger.warning(f"Key {redact_key_for_logging(key)} marked as invalid due to {response.status} error during precheck")
                         return False
                     else:
                         logger.debug(f"Key validation failed with status {response.status}: {redact_key_for_logging(key)}")
