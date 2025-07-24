@@ -1362,11 +1362,11 @@ endblock %} {% block head_extra_styles %}
         <ul id="validKeys" class="grid grid-cols-1 md:grid-cols-2 gap-3">
           {# Initial keys rendered by server-side for non-JS users or initial
           load #} {# JS will replace this content with paginated/filtered
-          results #} {% if valid_keys %} {% for key, fail_count in
+          results #} {% if valid_keys %} {% for key, key_info in
           valid_keys.items() %}
           <li
             class="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-all duration-300 border border-gray-100 hover:border-success-300 transform hover:-translate-y-1"
-            data-fail-count="{{ fail_count }}"
+            data-fail-count="{{ key_info.fail_count if key_info is mapping else key_info }}"
             data-key="{{ key }}"
           >
             <!-- Checkbox -->
@@ -1401,7 +1401,7 @@ endblock %} {% block head_extra_styles %}
                     class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-600"
                   >
                     <i class="fas fa-exclamation-triangle mr-1"></i>
-                    失败: {{ fail_count }}
+                    失败: {{ key_info.fail_count if key_info is mapping else key_info }}
                   </span>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
@@ -1553,10 +1553,11 @@ endblock %} {% block head_extra_styles %}
         <ul id="invalidKeys" class="grid grid-cols-1 md:grid-cols-2 gap-3">
           {# Initial keys rendered by server-side #} {# JS will replace this
           content with paginated results #} {% if invalid_keys %} {% for key,
-          fail_count in invalid_keys.items() %}
+          key_info in invalid_keys.items() %}
           <li
             class="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-all duration-300 border border-gray-100 hover:border-danger-300 transform hover:-translate-y-1"
             data-key="{{ key }}"
+            data-fail-count="{{ key_info.fail_count if key_info is mapping else key_info }}"
           >
             <!-- Checkbox -->
             <input
@@ -1590,7 +1591,7 @@ endblock %} {% block head_extra_styles %}
                     class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-600"
                   >
                     <i class="fas fa-exclamation-triangle mr-1"></i>
-                    失败: {{ fail_count }}
+                    失败: {{ key_info.fail_count if key_info is mapping else key_info }}
                   </span>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
@@ -1737,6 +1738,7 @@ endblock %} {% block head_extra_styles %}
           <li
             class="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-all duration-300 border border-gray-100 hover:border-gray-400 transform hover:-translate-y-1"
             data-key="{{ key }}"
+            data-fail-count="{{ key_info.fail_count if key_info is mapping else key_info }}"
           >
             <!-- Checkbox -->
             <input
