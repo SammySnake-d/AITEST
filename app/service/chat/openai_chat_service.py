@@ -40,27 +40,70 @@ def _clean_json_schema_properties(obj: Any) -> Any:
     """清理JSON Schema中Gemini API不支持的字段"""
     if not isinstance(obj, dict):
         return obj
-    
+
     # Gemini API不支持的JSON Schema字段
     unsupported_fields = {
-        "exclusiveMaximum", "exclusiveMinimum", "const", "examples", 
+        "exclusiveMaximum", "exclusiveMinimum", "const", "examples",
         "contentEncoding", "contentMediaType", "if", "then", "else",
         "allOf", "anyOf", "oneOf", "not", "definitions", "$schema",
         "$id", "$ref", "$comment", "readOnly", "writeOnly"
     }
-    
+
     cleaned = {}
     for key, value in obj.items():
         if key in unsupported_fields:
             continue
         if isinstance(value, dict):
-            cleaned[key] = _clean_json_schema_properties(value)
+            cleaned_value = _clean_json_schema_properties(value)
+
+            # 修复Gemini API v1beta的schema要求
+            if cleaned_value.get("type") == "object" and not cleaned_value.get("properties"):
+                # 对于空的object类型，添加一个默认的properties
+                cleaned_value["properties"] = {}
+            elif cleaned_value.get("type") == "array" and not cleaned_value.get("items"):
+                # 对于array类型，必须有items字段
+                cleaned_value["items"] = {"type": "string"}  # 默认为string类型
+
+            cleaned[key] = cleaned_value
         elif isinstance(value, list):
             cleaned[key] = [_clean_json_schema_properties(item) for item in value]
         else:
             cleaned[key] = value
-    
+
     return cleaned
+
+
+def _fix_function_parameters(parameters: Dict[str, Any]) -> Dict[str, Any]:
+    """修复function parameters以符合Gemini API v1beta要求"""
+    if not isinstance(parameters, dict):
+        return parameters
+
+    # 递归处理properties
+    if "properties" in parameters:
+        fixed_properties = {}
+        for prop_name, prop_schema in parameters["properties"].items():
+            if isinstance(prop_schema, dict):
+                fixed_prop = _fix_function_parameters(prop_schema)
+
+                # 确保object类型有properties字段
+                if fixed_prop.get("type") == "object" and "properties" not in fixed_prop:
+                    fixed_prop["properties"] = {}
+
+                # 确保array类型有items字段
+                elif fixed_prop.get("type") == "array" and "items" not in fixed_prop:
+                    fixed_prop["items"] = {"type": "string"}
+
+                fixed_properties[prop_name] = fixed_prop
+            else:
+                fixed_properties[prop_name] = prop_schema
+
+        parameters["properties"] = fixed_properties
+
+    # 处理items字段（用于array类型）
+    if "items" in parameters and isinstance(parameters["items"], dict):
+        parameters["items"] = _fix_function_parameters(parameters["items"])
+
+    return parameters
 
 
 def _build_tools(
@@ -102,10 +145,10 @@ def _build_tools(
             if item.get("type", "") == "function" and item.get("function"):
                 function = deepcopy(item.get("function"))
                 parameters = function.get("parameters", {})
-                if parameters.get("type") == "object" and not parameters.get(
-                    "properties", {}
-                ):
-                    function.pop("parameters", None)
+
+                # 修复parameters以符合Gemini API v1beta要求
+                if parameters:
+                    function["parameters"] = _fix_function_parameters(parameters)
 
                 # 清理函数中的不支持字段
                 function = _clean_json_schema_properties(function)

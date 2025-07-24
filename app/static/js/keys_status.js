@@ -131,16 +131,14 @@ function updateBatchActions(type) {
 
   if (count > 0) {
     batchActionsDiv.classList.remove("hidden");
-    // 强制设置display样式以确保显示
-    batchActionsDiv.style.display = "flex";
+    // 确保显示样式正确应用
+    batchActionsDiv.style.display = "";
     if (selectedCountSpan) {
       selectedCountSpan.textContent = count;
     }
     buttons.forEach((button) => (button.disabled = false));
   } else {
     batchActionsDiv.classList.add("hidden");
-    // 强制设置display样式以确保隐藏
-    batchActionsDiv.style.display = "none";
     if (selectedCountSpan) {
       selectedCountSpan.textContent = "0";
     }
