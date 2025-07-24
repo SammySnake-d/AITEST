@@ -7,7 +7,8 @@ from app.log.logger import get_gemini_logger
 from app.core.security import SecurityService
 from app.domain.gemini_models import (
     GeminiContent, GeminiRequest, ResetSelectedKeysRequest, VerifySelectedKeysRequest,
-    BatchSearchKeysRequest, BatchOperationKeysRequest, KeyFreezeRequest
+    BatchSearchKeysRequest, BatchOperationKeysRequest, KeyFreezeRequest,
+    KeysPaginationRequest, KeysPaginationResponse
 )
 from app.service.chat.gemini_chat_service import GeminiChatService
 from app.service.key.key_manager import KeyManager, get_key_manager_instance
@@ -459,9 +460,11 @@ async def batch_search_keys(
         if not keys_input:
             return JSONResponse({"success": False, "message": "请输入要搜索的密钥"}, status_code=400)
 
-        # 支持分号或换行分割
+        # 支持分号、半角逗号或换行分割
         if ';' in keys_input:
             search_keys = [key.strip() for key in keys_input.split(';') if key.strip()]
+        elif ',' in keys_input:
+            search_keys = [key.strip() for key in keys_input.split(',') if key.strip()]
         else:
             search_keys = [key.strip() for key in keys_input.split('\n') if key.strip()]
 
@@ -511,6 +514,57 @@ async def batch_search_keys(
     except Exception as e:
         logger.error(f"Failed to search keys: {str(e)}")
         return JSONResponse({"success": False, "message": f"搜索失败: {str(e)}"}, status_code=500)
+
+
+@router.get("/keys-paginated")
+async def get_keys_paginated(
+    key_type: str = "valid",
+    page: int = 1,
+    page_size: int = 10,
+    search: str = None,
+    fail_count_threshold: int = 0,
+    key_manager: KeyManager = Depends(get_key_manager)
+):
+    """获取分页的密钥列表"""
+    logger.info("-" * 50 + "get_keys_paginated" + "-" * 50)
+
+    try:
+        # 验证参数
+        if key_type not in ["valid", "invalid", "disabled"]:
+            return JSONResponse({"success": False, "message": "无效的密钥类型"}, status_code=400)
+
+        if page < 1:
+            page = 1
+        if page_size < 1 or page_size > 100:
+            page_size = 10
+        if fail_count_threshold < 0:
+            fail_count_threshold = 0
+
+        logger.info(f"Getting paginated keys: type={key_type}, page={page}, page_size={page_size}, search={search}, threshold={fail_count_threshold}")
+
+        # 获取分页数据
+        result = await key_manager.get_keys_by_status_paginated(
+            key_type=key_type,
+            page=page,
+            page_size=page_size,
+            search=search,
+            fail_count_threshold=fail_count_threshold
+        )
+
+        return JSONResponse({
+            "success": True,
+            "data": result["keys"],
+            "total_count": result["total_count"],
+            "page": result["page"],
+            "page_size": result["page_size"],
+            "total_pages": result["total_pages"],
+            "has_next": result["has_next"],
+            "has_prev": result["has_prev"]
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to get paginated keys: {str(e)}")
+        return JSONResponse({"success": False, "message": f"获取密钥列表失败: {str(e)}"}, status_code=500)
 
 
 @router.post("/batch-operation-keys")
@@ -566,38 +620,6 @@ async def batch_operation_keys(
         logger.error(f"Failed to perform batch operation: {str(e)}")
         return JSONResponse({"success": False, "message": f"批量操作失败: {str(e)}"}, status_code=500)
 
-
-@router.post("/freeze-key")
-async def freeze_key(
-    request: KeyFreezeRequest,
-    key_manager: KeyManager = Depends(get_key_manager)
-):
-    """冷冻指定密钥"""
-    logger.info("-" * 50 + "freeze_key" + "-" * 50)
-
-    try:
-        key = request.key
-        duration_seconds = request.duration_seconds
-        key_type = request.key_type or "gemini"
-
-        logger.info(f"Freezing {key_type} key: {key} for {duration_seconds or 'default'} seconds")
-
-        if key_type == "vertex":
-            result = await key_manager.freeze_vertex_key(key, duration_seconds)
-        else:  # gemini
-            result = await key_manager.freeze_key(key, duration_seconds)
-
-        if result:
-            freeze_duration = duration_seconds or settings.KEY_FREEZE_DURATION_SECONDS
-            return JSONResponse({
-                "success": True,
-                "message": f"密钥已冷冻 {freeze_duration} 秒"
-            })
-        else:
-            return JSONResponse({"success": False, "message": "密钥冷冻失败"}, status_code=400)
-    except Exception as e:
-        logger.error(f"Failed to freeze key: {str(e)}")
-        return JSONResponse({"success": False, "message": f"冷冻失败: {str(e)}"}, status_code=500)
 
 
 @router.post("/unfreeze-key")

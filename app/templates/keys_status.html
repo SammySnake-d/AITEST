@@ -1192,7 +1192,7 @@ endblock %} {% block head_extra_styles %}
       <div class="p-4 bg-white bg-opacity-40">
         <div class="text-sm text-gray-600 mb-2">
           <i class="fas fa-info-circle mr-1"></i>
-          支持批量搜索密钥，可使用分号(;)或换行分割多个密钥，搜索结果支持批量操作
+          支持批量搜索密钥，可使用分号(;)、半角逗号(,)或换行分割多个密钥，搜索结果支持批量操作
         </div>
         <div class="flex flex-wrap gap-2 text-xs text-gray-500">
           <span><i class="fas fa-check text-green-500"></i> 支持启用/禁用操作</span>
@@ -1341,13 +1341,7 @@ endblock %} {% block head_extra_styles %}
         >
           <i class="fas fa-ban"></i> 批量禁用
         </button>
-        <button
-          class="flex items-center gap-1 bg-cyan-500 hover:bg-cyan-600 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200 disabled:cursor-not-allowed"
-          onclick="event.stopPropagation(); batchFreezeKeys('valid')"
-          disabled
-        >
-          <i class="fas fa-snowflake"></i> 批量冷冻
-        </button>
+
         <button
           class="flex items-center gap-1 bg-red-800 hover:bg-red-900 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200 disabled:cursor-not-allowed"
           onclick="event.stopPropagation(); showDeleteConfirmationModal('valid', event)"
@@ -2205,17 +2199,17 @@ endblock %} {% block head_extra_styles %}
 
     <div class="mb-6">
       <label for="batchSearchInput" class="block text-sm font-medium text-gray-700 mb-2">
-        输入密钥（支持分号或换行分割）
+        输入密钥（支持分号、半角逗号或换行分割）
       </label>
       <textarea
         id="batchSearchInput"
         rows="6"
         class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm font-mono"
-        placeholder="请输入要搜索的密钥，可以使用分号(;)或换行分割多个密钥&#10;例如：&#10;key1;key2;key3&#10;或者：&#10;key1&#10;key2&#10;key3"
+        placeholder="请输入要搜索的密钥，可以使用分号(;)、半角逗号(,)或换行分割多个密钥&#10;例如：&#10;key1;key2;key3&#10;或者：&#10;key1,key2,key3&#10;或者：&#10;key1&#10;key2&#10;key3"
       ></textarea>
       <div class="mt-2 text-xs text-gray-500">
         <i class="fas fa-info-circle mr-1"></i>
-        支持分号(;)或换行分割，将自动去除空白字符
+        支持分号(;)、半角逗号(,)或换行分割，将自动去除空白字符
       </div>
     </div>
 
@@ -2313,14 +2307,7 @@ endblock %} {% block head_extra_styles %}
           >
             <i class="fas fa-ban mr-1"></i>批量禁用
           </button>
-          <button
-            onclick="batchFreezeFoundKeys()"
-            class="px-3 py-1.5 text-xs font-medium bg-cyan-500 hover:bg-cyan-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            id="batchFreezeFoundBtn"
-            disabled
-          >
-            <i class="fas fa-snowflake mr-1"></i>批量冷冻
-          </button>
+
           <button
             onclick="copyFoundKeys()"
             class="px-3 py-1.5 text-xs font-medium bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"

@@ -83,7 +83,7 @@ class VerifySelectedKeysRequest(BaseModel):
 
 
 class BatchSearchKeysRequest(BaseModel):
-    keys_input: str  # 支持分号或换行分割的密钥输入
+    keys_input: str  # 支持分号、半角逗号或换行分割的密钥输入
 
 
 class BatchOperationKeysRequest(BaseModel):
@@ -96,3 +96,22 @@ class KeyFreezeRequest(BaseModel):
     key: str
     duration_seconds: Optional[int] = None  # 冷冻时间，为空则使用默认配置
     key_type: Optional[str] = "gemini"  # 密钥类型：gemini 或 vertex
+
+
+class KeysPaginationRequest(BaseModel):
+    key_type: Literal["valid", "invalid", "disabled"] = "valid"  # 密钥类型
+    page: int = Field(1, ge=1, description="页码，从1开始")
+    page_size: int = Field(10, ge=1, le=100, description="每页大小，最大100")
+    search: Optional[str] = Field(None, description="搜索关键词")
+    fail_count_threshold: Optional[int] = Field(0, ge=0, description="失败次数阈值（仅对valid类型有效）")
+
+
+class KeysPaginationResponse(BaseModel):
+    success: bool
+    data: Dict[str, Any]  # 包含keys和分页信息
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+    has_next: bool
+    has_prev: bool

@@ -207,6 +207,98 @@ class KeyManager:
             "disabled_keys": disabled_keys
         }
 
+    async def get_keys_by_status_paginated(
+        self,
+        key_type: str = "valid",
+        page: int = 1,
+        page_size: int = 10,
+        search: str = None,
+        fail_count_threshold: int = 0
+    ) -> dict:
+        """获取分页的API key列表"""
+        # 首先获取所有密钥状态
+        all_keys_status = await self.get_keys_by_status()
+
+        # 根据类型选择对应的密钥
+        if key_type == "valid":
+            target_keys = all_keys_status["valid_keys"]
+        elif key_type == "invalid":
+            target_keys = all_keys_status["invalid_keys"]
+        elif key_type == "disabled":
+            target_keys = all_keys_status["disabled_keys"]
+        else:
+            raise ValueError(f"Invalid key_type: {key_type}")
+
+        # 转换为列表以便处理
+        keys_list = []
+        for key, key_info in target_keys.items():
+            # 确保key_info是字典格式
+            if isinstance(key_info, dict):
+                fail_count = key_info.get("fail_count", 0)
+                disabled = key_info.get("disabled", False)
+                frozen = key_info.get("frozen", False)
+            else:
+                # 兼容旧格式（直接是失败次数）
+                fail_count = key_info
+                disabled = await self.is_key_disabled(key)
+                frozen = await self.is_key_frozen(key)
+
+            keys_list.append({
+                "key": key,
+                "fail_count": fail_count,
+                "disabled": disabled,
+                "frozen": frozen
+            })
+
+        # 应用搜索过滤
+        if search:
+            search_lower = search.lower()
+            keys_list = [
+                item for item in keys_list
+                if search_lower in item["key"].lower()
+            ]
+
+        # 应用失败次数阈值过滤（仅对valid类型有效）
+        if key_type == "valid" and fail_count_threshold > 0:
+            keys_list = [
+                item for item in keys_list
+                if item["fail_count"] >= fail_count_threshold
+            ]
+
+        # 计算分页信息
+        total_count = len(keys_list)
+        total_pages = (total_count + page_size - 1) // page_size  # 向上取整
+
+        # 确保页码有效
+        page = max(1, min(page, total_pages if total_pages > 0 else 1))
+
+        # 计算分页范围
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+
+        # 获取当前页的数据
+        page_keys = keys_list[start_index:end_index]
+
+        # 转换回字典格式以保持兼容性
+        paginated_keys = {}
+        for item in page_keys:
+            key = item["key"]
+            paginated_keys[key] = {
+                "fail_count": item["fail_count"],
+                "disabled": item["disabled"],
+                "frozen": item["frozen"]
+            }
+
+        return {
+            "keys": paginated_keys,
+            "total_count": total_count,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+            "has_prev": page > 1
+        }
+
     async def get_vertex_keys_by_status(self) -> dict:
         """获取分类后的 Vertex Express API key 列表，包括失败次数"""
         valid_keys = {}

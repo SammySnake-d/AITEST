@@ -817,11 +817,10 @@ function toggleSection(header, sectionId) {
   }
 }
 
-// filterValidKeys 函数已被 filterAndSearchValidKeys 替代，此函数保留为空或可移除
+// filterValidKeys 函数现在使用后端分页
 function filterValidKeys() {
-  // This function is now handled by filterAndSearchValidKeys
-  // Kept for now to avoid breaking any potential legacy calls, but should be removed later.
-  filterAndSearchValidKeys();
+  // 现在使用后端分页，保留此函数以确保向后兼容
+  console.log("filterValidKeys called - using backend pagination");
 }
 
 // --- Initialization Helper Functions ---
@@ -890,10 +889,9 @@ function initializeSectionToggleListeners() {
 }
 
 function initializeKeyFilterControls() {
-  const thresholdInput = document.getElementById("failCountThreshold");
-  if (thresholdInput) {
-    thresholdInput.addEventListener("input", filterValidKeys);
-  }
+  // 过滤控件的事件监听器现在在 initializeKeyPaginationAndSearch 中处理
+  // 保留此函数以确保向后兼容
+  console.log("initializeKeyFilterControls called - using backend pagination");
 }
 
 function initializeGlobalBatchVerificationHandlers() {
@@ -1102,78 +1100,379 @@ function initializeAutoRefreshControls() {
   }
 }
 
-// These variables are used by pagination and search, define them in a scope accessible by initializeKeyPaginationAndSearch
-let allValidKeys = [];
-let allInvalidKeys = [];
-let allDisabledKeys = [];
-let filteredValidKeys = [];
+// Variables for backend pagination
 let itemsPerPage = 10; // Default
-let validCurrentPage = 1; // Also used by displayPage
-let invalidCurrentPage = 1; // Also used by displayPage
-let disabledCurrentPage = 1; // Also used by displayPage
+let validCurrentPage = 1;
+let invalidCurrentPage = 1;
+let disabledCurrentPage = 1;
+let currentSearch = "";
+let currentFailCountThreshold = 0;
+
+// Cache for pagination data to avoid unnecessary API calls
+let paginationCache = {
+  valid: { page: 0, data: null, search: "", threshold: 0 },
+  invalid: { page: 0, data: null, search: "" },
+  disabled: { page: 0, data: null, search: "" }
+};
+
+/**
+ * 从后端获取分页数据
+ */
+async function fetchPaginatedKeys(keyType, page = 1, pageSize = 10, search = "", failCountThreshold = 0) {
+  try {
+    const params = new URLSearchParams({
+      key_type: keyType,
+      page: page.toString(),
+      page_size: pageSize.toString()
+    });
+
+    if (search) {
+      params.append('search', search);
+    }
+
+    if (keyType === 'valid' && failCountThreshold > 0) {
+      params.append('fail_count_threshold', failCountThreshold.toString());
+    }
+
+    const response = await fetchAPI(`/gemini/v1beta/keys-paginated?${params.toString()}`);
+
+    if (response && response.success) {
+      return response;
+    } else {
+      throw new Error(response?.message || '获取密钥列表失败');
+    }
+  } catch (error) {
+    console.error(`Failed to fetch paginated keys for ${keyType}:`, error);
+    showNotification(`获取${keyType}密钥列表失败: ${error.message}`, 'error');
+    return null;
+  }
+}
+
+/**
+ * 渲染密钥列表项的HTML
+ */
+function renderKeyListItem(key, keyInfo, keyType) {
+  const failCount = keyInfo.fail_count || 0;
+  const disabled = keyInfo.disabled || false;
+  const frozen = keyInfo.frozen || false;
+
+  // 状态标签
+  let statusBadges = '';
+  if (keyType === 'valid') {
+    statusBadges = '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success-50 text-success-600"><i class="fas fa-check mr-1"></i> 有效</span>';
+  } else if (keyType === 'invalid') {
+    statusBadges = '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger-50 text-danger-600"><i class="fas fa-times mr-1"></i> 无效</span>';
+  } else if (keyType === 'disabled') {
+    statusBadges = '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-50 text-gray-600"><i class="fas fa-ban mr-1"></i> 已禁用</span>';
+  }
+
+  if (frozen) {
+    statusBadges += ' <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600"><i class="fas fa-snowflake mr-1"></i> 已冷冻</span>';
+  }
+
+  if (failCount > 0) {
+    statusBadges += ` <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-600"><i class="fas fa-exclamation-triangle mr-1"></i> 失败: ${failCount}</span>`;
+  }
+
+  // 操作按钮
+  let actionButtons = '';
+  if (keyType === 'disabled') {
+    actionButtons = `
+      <button class="flex items-center gap-1 bg-success-600 hover:bg-success-700 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="verifyKey('${key}', this)">
+        <i class="fas fa-check-circle"></i> 验证
+      </button>
+      <button class="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="copyKey('${key}')">
+        <i class="fas fa-copy"></i> 复制
+      </button>
+      <button class="flex items-center gap-1 bg-green-500 hover:bg-green-600 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="enableKey('${key}', this)">
+        <i class="fas fa-check"></i> 启用
+      </button>
+      <button class="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="showKeyUsageDetails('${key}')">
+        <i class="fas fa-chart-pie"></i> 详情
+      </button>
+      <button class="flex items-center gap-1 bg-red-800 hover:bg-red-900 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="showSingleKeyDeleteConfirmModal('${key}', this)">
+        <i class="fas fa-trash-alt"></i> 删除
+      </button>
+    `;
+  } else {
+    actionButtons = `
+      <button class="flex items-center gap-1 bg-success-600 hover:bg-success-700 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="verifyKey('${key}', this)">
+        <i class="fas fa-check-circle"></i> 验证
+      </button>
+      <button class="flex items-center gap-1 bg-gray-500 hover:bg-gray-600 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="resetKeyFailCount('${key}', this)">
+        <i class="fas fa-redo-alt"></i> 重置
+      </button>
+      <button class="flex items-center gap-1 bg-blue-500 hover:bg-blue-600 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="copyKey('${key}')">
+        <i class="fas fa-copy"></i> 复制
+      </button>
+      <button class="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="showKeyUsageDetails('${key}')">
+        <i class="fas fa-chart-pie"></i> 详情
+      </button>
+      <button class="flex items-center gap-1 bg-red-800 hover:bg-red-900 text-white px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-200" onclick="showSingleKeyDeleteConfirmModal('${key}', this)">
+        <i class="fas fa-trash-alt"></i> 删除
+      </button>
+    `;
+  }
+
+  const borderColor = keyType === 'valid' ? 'border-success-300' : keyType === 'invalid' ? 'border-danger-300' : 'border-gray-400';
+
+  return `
+    <li class="bg-white rounded-lg p-3 shadow-sm hover:shadow-md transition-all duration-300 border border-gray-100 hover:${borderColor} transform hover:-translate-y-1"
+        data-fail-count="${failCount}" data-key="${key}">
+      <input type="checkbox" class="form-checkbox h-5 w-5 text-primary-600 border-gray-300 rounded focus:ring-primary-500 mt-1 key-checkbox"
+             data-key-type="${keyType}" value="${key}" />
+      <div class="flex-grow">
+        <div class="flex flex-col justify-between h-full gap-3">
+          <div class="flex flex-wrap items-center gap-2">
+            ${statusBadges}
+            <div class="flex items-center gap-1">
+              <span class="key-text font-mono" data-full-key="${key}">${key.substring(0, 4)}...${key.substring(key.length - 4)}</span>
+              <button class="text-gray-500 hover:text-primary-600 transition-colors" onclick="toggleKeyVisibility(this)" title="显示/隐藏密钥">
+                <i class="fas fa-eye"></i>
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            ${actionButtons}
+          </div>
+        </div>
+      </div>
+    </li>
+  `;
+}
+
+/**
+ * 使用后端分页显示密钥列表
+ */
+async function displayPageBackend(keyType, page = 1) {
+  const listElement = document.getElementById(`${keyType}Keys`);
+  const paginationControls = document.getElementById(`${keyType}PaginationControls`);
+
+  if (!listElement || !paginationControls) {
+    console.error(`Missing elements for ${keyType} keys display`);
+    return;
+  }
+
+  // 显示加载状态
+  listElement.innerHTML = '<li class="text-center text-gray-500 py-4 col-span-full"><i class="fas fa-spinner fa-spin mr-2"></i>加载中...</li>';
+  paginationControls.innerHTML = '';
+
+  // 获取当前搜索和过滤条件
+  const search = keyType === 'valid' ? currentSearch : '';
+  const threshold = keyType === 'valid' ? currentFailCountThreshold : 0;
+
+  // 检查缓存
+  const cacheKey = `${keyType}_${page}_${itemsPerPage}_${search}_${threshold}`;
+  const cache = paginationCache[keyType];
+
+  let response;
+  if (cache.page === page && cache.search === search && cache.threshold === threshold && cache.data) {
+    response = cache.data;
+  } else {
+    // 从后端获取数据
+    response = await fetchPaginatedKeys(keyType, page, itemsPerPage, search, threshold);
+    if (!response) {
+      listElement.innerHTML = '<li class="text-center text-red-500 py-4 col-span-full"><i class="fas fa-exclamation-triangle mr-2"></i>加载失败</li>';
+      return;
+    }
+
+    // 更新缓存
+    paginationCache[keyType] = {
+      page: page,
+      data: response,
+      search: search,
+      threshold: threshold
+    };
+  }
+
+  // 更新当前页码
+  if (keyType === 'valid') {
+    validCurrentPage = response.page;
+  } else if (keyType === 'invalid') {
+    invalidCurrentPage = response.page;
+  } else if (keyType === 'disabled') {
+    disabledCurrentPage = response.page;
+  }
+
+  // 渲染密钥列表
+  const keys = response.data;
+  if (Object.keys(keys).length === 0) {
+    const emptyMessage = getEmptyMessage(keyType, search, threshold);
+    listElement.innerHTML = `<li class="text-center text-gray-500 py-4 col-span-full">${emptyMessage}</li>`;
+  } else {
+    const keyItems = Object.entries(keys).map(([key, keyInfo]) =>
+      renderKeyListItem(key, keyInfo, keyType)
+    ).join('');
+    listElement.innerHTML = keyItems;
+  }
+
+  // 设置分页控件
+  setupPaginationControlsBackend(keyType, response);
+
+  // 更新批量操作按钮状态
+  updateBatchActions(keyType);
+}
+
+/**
+ * 获取空列表的提示消息
+ */
+function getEmptyMessage(keyType, search, threshold) {
+  if (search || (keyType === 'valid' && threshold > 0)) {
+    return '<i class="fas fa-search mr-2"></i>未找到匹配的密钥';
+  }
+
+  switch (keyType) {
+    case 'valid':
+      return '暂无有效密钥';
+    case 'invalid':
+      return '暂无无效密钥';
+    case 'disabled':
+      return '暂无已禁用密钥';
+    default:
+      return '暂无密钥';
+  }
+}
+
+/**
+ * 设置后端分页控件
+ */
+function setupPaginationControlsBackend(keyType, response) {
+  const controlsContainer = document.getElementById(`${keyType}PaginationControls`);
+  if (!controlsContainer) return;
+
+  const { page: currentPage, total_pages: totalPages, has_prev: hasPrev, has_next: hasNext } = response;
+
+  if (totalPages <= 1) {
+    controlsContainer.innerHTML = '';
+    return;
+  }
+
+  controlsContainer.innerHTML = '';
+
+  const baseButtonClasses = "pagination-button px-3 py-1 rounded text-sm transition-colors duration-150 ease-in-out";
+
+  // 上一页按钮
+  const prevButton = document.createElement("button");
+  prevButton.innerHTML = '<i class="fas fa-chevron-left"></i>';
+  prevButton.className = `${baseButtonClasses} disabled:opacity-50 disabled:cursor-not-allowed`;
+  prevButton.disabled = !hasPrev;
+  prevButton.onclick = () => displayPageBackend(keyType, currentPage - 1);
+  controlsContainer.appendChild(prevButton);
+
+  // 页码按钮逻辑
+  const maxVisiblePages = 5;
+  let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+  let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+  // 调整起始页以确保显示足够的页码
+  if (endPage - startPage + 1 < maxVisiblePages) {
+    startPage = Math.max(1, endPage - maxVisiblePages + 1);
+  }
+
+  // 第一页和省略号
+  if (startPage > 1) {
+    const firstPageButton = document.createElement("button");
+    firstPageButton.textContent = "1";
+    firstPageButton.className = baseButtonClasses;
+    firstPageButton.onclick = () => displayPageBackend(keyType, 1);
+    controlsContainer.appendChild(firstPageButton);
+
+    if (startPage > 2) {
+      const ellipsis = document.createElement("span");
+      ellipsis.textContent = "...";
+      ellipsis.className = "px-2 py-1 text-gray-500";
+      controlsContainer.appendChild(ellipsis);
+    }
+  }
+
+  // 页码按钮
+  for (let i = startPage; i <= endPage; i++) {
+    const pageButton = document.createElement("button");
+    pageButton.textContent = i;
+    pageButton.className = `${baseButtonClasses} ${i === currentPage ? "active font-semibold" : ""}`;
+    pageButton.onclick = () => displayPageBackend(keyType, i);
+    controlsContainer.appendChild(pageButton);
+  }
+
+  // 最后一页和省略号
+  if (endPage < totalPages) {
+    if (endPage < totalPages - 1) {
+      const ellipsis = document.createElement("span");
+      ellipsis.textContent = "...";
+      ellipsis.className = "px-2 py-1 text-gray-500";
+      controlsContainer.appendChild(ellipsis);
+    }
+
+    const lastPageButton = document.createElement("button");
+    lastPageButton.textContent = totalPages;
+    lastPageButton.className = baseButtonClasses;
+    lastPageButton.onclick = () => displayPageBackend(keyType, totalPages);
+    controlsContainer.appendChild(lastPageButton);
+  }
+
+  // 下一页按钮
+  const nextButton = document.createElement("button");
+  nextButton.innerHTML = '<i class="fas fa-chevron-right"></i>';
+  nextButton.className = `${baseButtonClasses} disabled:opacity-50 disabled:cursor-not-allowed`;
+  nextButton.disabled = !hasNext;
+  nextButton.onclick = () => displayPageBackend(keyType, currentPage + 1);
+  controlsContainer.appendChild(nextButton);
+}
 
 function initializeKeyPaginationAndSearch() {
-  const validKeysListElement = document.getElementById("validKeys");
-  const invalidKeysListElement = document.getElementById("invalidKeys");
-  const disabledKeysListElement = document.getElementById("disabledKeys");
   const searchInput = document.getElementById("keySearchInput");
   const itemsPerPageSelect = document.getElementById("itemsPerPageSelect");
-  const thresholdInput = document.getElementById("failCountThreshold"); // Already used by initializeKeyFilterControls
+  const thresholdInput = document.getElementById("failCountThreshold");
 
-  if (validKeysListElement) {
-    allValidKeys = Array.from(
-      validKeysListElement.querySelectorAll("li[data-key]")
-    );
-    allValidKeys.forEach((li) => {
-      const keyTextSpan = li.querySelector(".key-text");
-      if (keyTextSpan && keyTextSpan.dataset.fullKey) {
-        li.dataset.key = keyTextSpan.dataset.fullKey;
-      }
-    });
-    filteredValidKeys = [...allValidKeys];
-  }
-  if (invalidKeysListElement) {
-    allInvalidKeys = Array.from(
-      invalidKeysListElement.querySelectorAll("li[data-key]")
-    );
-    allInvalidKeys.forEach((li) => {
-      const keyTextSpan = li.querySelector(".key-text");
-      if (keyTextSpan && keyTextSpan.dataset.fullKey) {
-        li.dataset.key = keyTextSpan.dataset.fullKey;
-      }
-    });
-  }
-  if (disabledKeysListElement) {
-    allDisabledKeys = Array.from(
-      disabledKeysListElement.querySelectorAll("li[data-key]")
-    );
-    allDisabledKeys.forEach((li) => {
-      const keyTextSpan = li.querySelector(".key-text");
-      if (keyTextSpan && keyTextSpan.dataset.fullKey) {
-        li.dataset.key = keyTextSpan.dataset.fullKey;
-      }
-    });
-  }
-
+  // 初始化每页显示数量
   if (itemsPerPageSelect) {
-    itemsPerPage = parseInt(itemsPerPageSelect.value, 10); // Initialize itemsPerPage
+    itemsPerPage = parseInt(itemsPerPageSelect.value, 10);
     itemsPerPageSelect.addEventListener("change", () => {
       itemsPerPage = parseInt(itemsPerPageSelect.value, 10);
-      filterAndSearchValidKeys(); // Re-filter and display page 1 for valid keys
-      displayPage("invalid", 1, allInvalidKeys); // Reset invalid keys to page 1
-      displayPage("disabled", 1, allDisabledKeys); // Reset disabled keys to page 1
+      // 清除缓存并重新加载所有类型的第一页
+      paginationCache = {
+        valid: { page: 0, data: null, search: "", threshold: 0 },
+        invalid: { page: 0, data: null, search: "" },
+        disabled: { page: 0, data: null, search: "" }
+      };
+      displayPageBackend("valid", 1);
+      displayPageBackend("invalid", 1);
+      displayPageBackend("disabled", 1);
     });
   }
 
-  // Initial display calls
-  filterAndSearchValidKeys();
-  displayPage("invalid", 1, allInvalidKeys);
-  displayPage("disabled", 1, allDisabledKeys);
-
-  // Event listeners for search and filter (thresholdInput listener is in initializeKeyFilterControls)
+  // 搜索输入事件监听
   if (searchInput) {
-    searchInput.addEventListener("input", filterAndSearchValidKeys);
+    let searchTimeout;
+    searchInput.addEventListener("input", () => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        currentSearch = searchInput.value.trim();
+        // 清除valid类型的缓存并重新加载
+        paginationCache.valid = { page: 0, data: null, search: "", threshold: 0 };
+        displayPageBackend("valid", 1);
+      }, 300); // 防抖，300ms后执行搜索
+    });
   }
+
+  // 失败次数阈值事件监听
+  if (thresholdInput) {
+    let thresholdTimeout;
+    thresholdInput.addEventListener("input", () => {
+      clearTimeout(thresholdTimeout);
+      thresholdTimeout = setTimeout(() => {
+        currentFailCountThreshold = parseInt(thresholdInput.value, 10) || 0;
+        // 清除valid类型的缓存并重新加载
+        paginationCache.valid = { page: 0, data: null, search: "", threshold: 0 };
+        displayPageBackend("valid", 1);
+      }, 300); // 防抖，300ms后执行过滤
+    });
+  }
+
+  // 初始化显示所有类型的第一页
+  displayPageBackend("valid", 1);
+  displayPageBackend("invalid", 1);
+  displayPageBackend("disabled", 1);
 }
 
 function registerServiceWorker() {
@@ -1655,12 +1954,21 @@ window.closeKeyUsageDetailsModal = function () {
 // --- Key List Display & Pagination ---
 
 /**
- * Displays key list items for a specific type and page.
+ * 新的displayPage函数，使用后端分页
+ * @param {string} type 'valid', 'invalid', or 'disabled'
+ * @param {number} page Page number (1-based)
+ */
+function displayPage(type, page) {
+  return displayPageBackend(type, page);
+}
+
+/**
+ * 旧的前端分页函数（保留以确保兼容性）
  * @param {string} type 'valid' or 'invalid'
  * @param {number} page Page number (1-based)
  * @param {Array} keyItemsArray The array of li elements to paginate (e.g., filteredValidKeys, allInvalidKeys)
  */
-function displayPage(type, page, keyItemsArray) {
+function displayPageLegacy(type, page, keyItemsArray) {
   const listElement = document.getElementById(`${type}Keys`);
   const paginationControls = document.getElementById(
     `${type}PaginationControls`
@@ -1772,7 +2080,7 @@ function setupPaginationControls(type, currentPage, totalPages, keyItemsArray) {
   prevButton.innerHTML = '<i class="fas fa-chevron-left"></i>';
   prevButton.className = `${baseButtonClasses} disabled:opacity-50 disabled:cursor-not-allowed`;
   prevButton.disabled = currentPage === 1;
-  prevButton.onclick = () => displayPage(type, currentPage - 1, keyItemsArray);
+  prevButton.onclick = () => displayPageLegacy(type, currentPage - 1, keyItemsArray);
   controlsContainer.appendChild(prevButton);
 
   // Page Number Buttons (Logic for ellipsis)
@@ -1789,7 +2097,7 @@ function setupPaginationControls(type, currentPage, totalPages, keyItemsArray) {
     const firstPageButton = document.createElement("button");
     firstPageButton.textContent = "1";
     firstPageButton.className = `${baseButtonClasses}`;
-    firstPageButton.onclick = () => displayPage(type, 1, keyItemsArray);
+    firstPageButton.onclick = () => displayPageLegacy(type, 1, keyItemsArray);
     controlsContainer.appendChild(firstPageButton);
     if (startPage > 2) {
       const ellipsis = document.createElement("span");
@@ -1808,7 +2116,7 @@ function setupPaginationControls(type, currentPage, totalPages, keyItemsArray) {
         ? "active font-semibold" // Relies on .pagination-button.active CSS for styling
         : "" // Non-active buttons just use .pagination-button style
     }`;
-    pageButton.onclick = () => displayPage(type, i, keyItemsArray);
+    pageButton.onclick = () => displayPageLegacy(type, i, keyItemsArray);
     controlsContainer.appendChild(pageButton);
   }
 
@@ -1823,7 +2131,7 @@ function setupPaginationControls(type, currentPage, totalPages, keyItemsArray) {
     const lastPageButton = document.createElement("button");
     lastPageButton.textContent = totalPages;
     lastPageButton.className = `${baseButtonClasses}`;
-    lastPageButton.onclick = () => displayPage(type, totalPages, keyItemsArray);
+    lastPageButton.onclick = () => displayPageLegacy(type, totalPages, keyItemsArray);
     controlsContainer.appendChild(lastPageButton);
   }
 
@@ -1832,39 +2140,20 @@ function setupPaginationControls(type, currentPage, totalPages, keyItemsArray) {
   nextButton.innerHTML = '<i class="fas fa-chevron-right"></i>';
   nextButton.className = `${baseButtonClasses} disabled:opacity-50 disabled:cursor-not-allowed`;
   nextButton.disabled = currentPage === totalPages;
-  nextButton.onclick = () => displayPage(type, currentPage + 1, keyItemsArray);
+  nextButton.onclick = () => displayPageLegacy(type, currentPage + 1, keyItemsArray);
   controlsContainer.appendChild(nextButton);
 }
 
 // --- Filtering & Searching (Valid Keys Only) ---
 
 /**
- * Filters and searches the valid keys based on threshold and search term.
- * Updates the `filteredValidKeys` array and redisplays the first page.
+ * 旧的过滤和搜索函数（保留以确保兼容性）
+ * 现在使用后端分页，此函数主要用于向后兼容
  */
 function filterAndSearchValidKeys() {
-  const thresholdInput = document.getElementById("failCountThreshold");
-  const searchInput = document.getElementById("keySearchInput");
-
-  const threshold = parseInt(thresholdInput.value, 10);
-  const filterThreshold = isNaN(threshold) || threshold < 0 ? 0 : threshold;
-  const searchTerm = searchInput.value.trim().toLowerCase();
-
-  // Filter from the original full list (allValidKeys)
-  filteredValidKeys = allValidKeys.filter((item) => {
-    const failCount = parseInt(item.dataset.failCount, 10);
-    const fullKey = item.dataset.key || ""; // Use data-key which should hold the full key
-
-    const failCountMatch = failCount >= filterThreshold;
-    const searchMatch =
-      searchTerm === "" || fullKey.toLowerCase().includes(searchTerm);
-
-    return failCountMatch && searchMatch;
-  });
-
-  // Reset to the first page after filtering/searching
-  validCurrentPage = 1;
-  displayPage("valid", validCurrentPage, filteredValidKeys);
+  // 新的后端分页逻辑已经在事件监听器中处理
+  // 这里保留函数以确保向后兼容，但实际逻辑已移至后端
+  console.log("filterAndSearchValidKeys called - using backend pagination");
 }
 
 // --- 批量搜索功能 ---
@@ -2088,5 +2377,161 @@ async function batchEnableKeys(type) {
   } catch (error) {
     console.error("批量启用失败:", error);
     showResultModal(false, "批量启用请求失败: " + error.message, false);
+  }
+}
+
+// --- 批量搜索结果相关函数 ---
+
+/**
+ * 更新批量搜索结果中的选择状态
+ */
+function updateFoundKeySelection() {
+  const checkboxes = document.querySelectorAll('.found-key-checkbox');
+  const selectAllCheckbox = document.getElementById('selectAllFoundKeys');
+  const selectedCount = document.querySelectorAll('.found-key-checkbox:checked').length;
+
+  // 更新全选复选框状态
+  if (selectAllCheckbox) {
+    selectAllCheckbox.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+    selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+  }
+
+  // 更新选中计数显示
+  const selectedCountElement = document.getElementById('selectedFoundKeysCount');
+  if (selectedCountElement) {
+    selectedCountElement.textContent = selectedCount;
+  }
+
+  // 更新批量操作按钮状态
+  const batchButtons = document.querySelectorAll('#batchEnableFoundBtn, #batchDisableFoundBtn, #copyFoundBtn, #batchDeleteFoundBtn');
+  batchButtons.forEach(button => {
+    if (button) {
+      button.disabled = selectedCount === 0;
+    }
+  });
+}
+
+/**
+ * 切换批量搜索结果中的全选状态
+ */
+function toggleSelectAllFoundKeys() {
+  const selectAllCheckbox = document.getElementById('selectAllFoundKeys');
+  const checkboxes = document.querySelectorAll('.found-key-checkbox');
+
+  checkboxes.forEach(checkbox => {
+    checkbox.checked = selectAllCheckbox.checked;
+  });
+
+  updateFoundKeySelection();
+}
+
+/**
+ * 复制批量搜索结果中选中的密钥
+ */
+function copyFoundKeys() {
+  const selectedCheckboxes = document.querySelectorAll('.found-key-checkbox:checked');
+  const selectedKeys = Array.from(selectedCheckboxes).map(checkbox => checkbox.value);
+
+  if (selectedKeys.length === 0) {
+    showNotification('没有选中的密钥可复制', 'warning');
+    return;
+  }
+
+  const keysText = selectedKeys.join('\n');
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(keysText).then(() => {
+      showNotification(`已复制 ${selectedKeys.length} 个密钥到剪贴板`, 'success');
+    }).catch(err => {
+      console.error('复制失败:', err);
+      fallbackCopyToClipboard(keysText);
+    });
+  } else {
+    fallbackCopyToClipboard(keysText);
+  }
+}
+
+/**
+ * 批量启用搜索结果中选中的密钥
+ */
+async function batchEnableFoundKeys() {
+  const selectedCheckboxes = document.querySelectorAll('.found-key-checkbox:checked');
+  const selectedKeys = Array.from(selectedCheckboxes).map(checkbox => checkbox.value);
+
+  if (selectedKeys.length === 0) {
+    showNotification('没有选中的密钥可启用', 'warning');
+    return;
+  }
+
+  try {
+    const data = await fetchAPI(`/api/config/keys/batch-enable`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ keys: selectedKeys }),
+    });
+
+    if (data.success) {
+      showResultModal(true, `成功启用 ${data.success_count} 个密钥`, true);
+    } else {
+      showResultModal(false, data.message || "批量启用失败", false);
+    }
+  } catch (error) {
+    console.error("批量启用失败:", error);
+    showResultModal(false, "批量启用请求失败: " + error.message, false);
+  }
+}
+
+/**
+ * 批量禁用搜索结果中选中的密钥
+ */
+async function batchDisableFoundKeys() {
+  const selectedCheckboxes = document.querySelectorAll('.found-key-checkbox:checked');
+  const selectedKeys = Array.from(selectedCheckboxes).map(checkbox => checkbox.value);
+
+  if (selectedKeys.length === 0) {
+    showNotification('没有选中的密钥可禁用', 'warning');
+    return;
+  }
+
+  try {
+    const data = await fetchAPI(`/api/config/keys/batch-disable`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ keys: selectedKeys }),
+    });
+
+    if (data.success) {
+      showResultModal(true, `成功禁用 ${data.success_count} 个密钥`, true);
+    } else {
+      showResultModal(false, data.message || "批量禁用失败", false);
+    }
+  } catch (error) {
+    console.error("批量禁用失败:", error);
+    showResultModal(false, "批量禁用请求失败: " + error.message, false);
+  }
+}
+
+/**
+ * 批量操作搜索结果中选中的密钥（通用函数）
+ */
+async function batchOperationFoundKeys(operation) {
+  if (operation === 'enable') {
+    await batchEnableFoundKeys();
+  } else if (operation === 'disable') {
+    await batchDisableFoundKeys();
+  }
+}
+
+/**
+ * 关闭批量搜索结果模态框
+ */
+function closeBatchSearchResultModal() {
+  const modal = document.getElementById('batchSearchResultModal');
+  if (modal) {
+    modal.classList.add('hidden');
   }
 }
