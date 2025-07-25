@@ -936,8 +936,9 @@ class KeyManager:
             return
 
         try:
-            # 使用配置的预检数量
-            batch_size = self.precheck_count
+            # 使用配置的预检数量，但限制为最多3个用于调试
+            batch_size = min(3, self.precheck_count)
+            logger.info(f"Limiting precheck batch size to {batch_size} for debugging")
 
             # 计算预检起始位置（从当前密钥指针位置开始）
             current_position = self.get_current_key_position()
@@ -1084,20 +1085,30 @@ class KeyManager:
     async def _precheck_single_key(self, key: str) -> bool:
         """预检单个密钥（改进版本）"""
         try:
+            logger.info(f"Precheck: Processing key {redact_key_for_logging(key)}")
+
+            # 检查密钥状态
+            is_frozen = await self.is_key_frozen(key)
+            is_disabled = await self.is_key_disabled(key)
+
+            logger.info(f"Precheck: Key {redact_key_for_logging(key)} status - frozen: {is_frozen}, disabled: {is_disabled}")
+
             # 对于预检，我们要更宽松一些，即使失败次数较高也要尝试验证
             # 只跳过明确被冻结或禁用的密钥
-            if await self.is_key_frozen(key) or await self.is_key_disabled(key):
-                logger.debug(f"Key {redact_key_for_logging(key)} is frozen/disabled, skipping precheck")
+            if is_frozen or is_disabled:
+                logger.info(f"Key {redact_key_for_logging(key)} is frozen/disabled, skipping precheck")
                 return False
+
+            logger.info(f"Precheck: Key {redact_key_for_logging(key)} passed status check, starting API validation")
 
             # 执行实际的API验证
             is_valid = await self._validate_key_with_api(key)
 
             if not is_valid:
-                logger.debug(f"Precheck detected invalid key: {redact_key_for_logging(key)}")
+                logger.info(f"Precheck detected invalid key: {redact_key_for_logging(key)}")
                 return False
             else:
-                logger.debug(f"Precheck confirmed key validity: {redact_key_for_logging(key)}")
+                logger.info(f"Precheck confirmed key validity: {redact_key_for_logging(key)}")
                 return True
 
         except Exception as e:
@@ -1188,14 +1199,16 @@ class KeyManager:
                 generation_config={"temperature": 0.7, "topP": 1.0, "maxOutputTokens": 10}
             )
 
-            logger.debug(f"Precheck: Validating key {redact_key_for_logging(key)} using batch verification logic")
+            logger.info(f"Precheck: Starting API validation for key {redact_key_for_logging(key)}")
 
             # 执行与批量验证完全相同的API调用
-            await chat_service.generate_content(
+            result = await chat_service.generate_content(
                 settings.TEST_MODEL,
                 gemini_request,
                 key
             )
+
+            logger.info(f"Precheck: API validation successful for key {redact_key_for_logging(key)}")
 
             # 验证成功 - 与批量验证相同的处理
             logger.debug(f"Precheck: Key {redact_key_for_logging(key)} is valid")
@@ -1205,7 +1218,7 @@ class KeyManager:
 
         except Exception as e:
             error_message = str(e)
-            logger.debug(f"Precheck: Key {redact_key_for_logging(key)} validation failed: {error_message}")
+            logger.info(f"Precheck: Key {redact_key_for_logging(key)} validation failed with error: {error_message}")
 
             # 完全复制批量验证的错误处理逻辑
             is_429_error = "429" in error_message or "Too Many Requests" in error_message or "quota" in error_message.lower()
@@ -1219,10 +1232,10 @@ class KeyManager:
                 async with self.failure_count_lock:
                     if key in self.key_failure_counts:
                         self.key_failure_counts[key] += 1
-                        logger.debug(f"Precheck: Key {redact_key_for_logging(key)}, incrementing failure count")
+                        logger.info(f"Precheck: Key {redact_key_for_logging(key)}, incrementing failure count to {self.key_failure_counts[key]}")
                     else:
                         self.key_failure_counts[key] = 1
-                        logger.debug(f"Precheck: Key {redact_key_for_logging(key)}, initializing failure count to 1")
+                        logger.info(f"Precheck: Key {redact_key_for_logging(key)}, initializing failure count to 1")
 
             return False
 
