@@ -658,7 +658,7 @@ async function executeResetAll(type) {
     const resetButton = document.querySelector(
       `button[data-reset-type="${type}"]`
     );
-    const typeText = type === "valid" ? "有效" : type === "invalid" ? "无效" : "已禁用";
+    const typeText = type === "valid" ? "有效" : type === "invalid" ? "无效" : "已冻结";
     if (!resetButton) {
       showResultModal(
         false,
@@ -1010,7 +1010,7 @@ function initializeGlobalBatchVerificationHandlers() {
       }
       const keysToVerify = getSelectedKeys(type);
       if (keysToVerify.length === 0) {
-        const typeText = type === "valid" ? "有效" : type === "invalid" ? "无效" : "已禁用";
+        const typeText = type === "valid" ? "有效" : type === "invalid" ? "无效" : "已冻结";
         showNotification(
           `没有选中的${typeText}密钥可验证`,
           "warning"
@@ -1259,7 +1259,7 @@ function renderKeyListItem(key, keyInfo, keyType) {
   } else if (keyType === 'invalid') {
     statusBadges = '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger-50 text-danger-600"><i class="fas fa-times mr-1"></i> 无效</span>';
   } else if (keyType === 'disabled') {
-    statusBadges = '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-50 text-gray-600"><i class="fas fa-ban mr-1"></i> 已禁用</span>';
+    statusBadges = '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600"><i class="fas fa-snowflake mr-1"></i> 已冻结</span>';
   }
 
   if (frozen) {
@@ -1424,7 +1424,7 @@ function getEmptyMessage(keyType, search, threshold) {
     case 'invalid':
       return '暂无无效密钥';
     case 'disabled':
-      return '暂无已禁用密钥';
+      return '暂无已冻结密钥';
     default:
       return '暂无密钥';
   }
@@ -1521,9 +1521,15 @@ function initializeKeyPaginationAndSearch() {
   const itemsPerPageSelect = document.getElementById("itemsPerPageSelect");
   const thresholdInput = document.getElementById("failCountThreshold");
 
-  // 初始化每页显示数量
+  // 初始化每页显示数量 - 确保使用正确的默认值
   if (itemsPerPageSelect) {
-    itemsPerPage = parseInt(itemsPerPageSelect.value, 10);
+    // 确保select元素有正确的默认值
+    if (!itemsPerPageSelect.value || itemsPerPageSelect.value === "") {
+      itemsPerPageSelect.value = "10"; // 强制设置默认值
+    }
+    itemsPerPage = parseInt(itemsPerPageSelect.value, 10) || 10; // 添加fallback
+
+    console.log(`Initialized itemsPerPage: ${itemsPerPage} from select value: ${itemsPerPageSelect.value}`);
 
     // 移除可能存在的旧事件监听器
     itemsPerPageSelect.removeEventListener("change", handleItemsPerPageChange);
@@ -1533,6 +1539,10 @@ function initializeKeyPaginationAndSearch() {
 
     // 同时添加input事件作为备用
     itemsPerPageSelect.addEventListener("input", handleItemsPerPageChange);
+  } else {
+    // 如果select元素不存在，使用默认值
+    itemsPerPage = 10;
+    console.log("itemsPerPageSelect not found, using default itemsPerPage: 10");
   }
 
   // 搜索输入事件监听
@@ -1593,6 +1603,17 @@ document.addEventListener("change", (event) => {
 
 // 初始化
 document.addEventListener("DOMContentLoaded", () => {
+  // 立即初始化分页大小，防止竞态条件
+  const itemsPerPageSelect = document.getElementById("itemsPerPageSelect");
+  if (itemsPerPageSelect) {
+    // 确保select有正确的默认值
+    if (!itemsPerPageSelect.value || itemsPerPageSelect.value === "") {
+      itemsPerPageSelect.value = "10";
+    }
+    itemsPerPage = parseInt(itemsPerPageSelect.value, 10) || 10;
+    console.log(`Early initialization: itemsPerPage set to ${itemsPerPage}`);
+  }
+
   initializePageAnimationsAndEffects();
   initializeSectionToggleListeners();
   initializeKeyFilterControls();
@@ -2193,7 +2214,7 @@ function updatePrecheckStatus(enabled) {
     statusElement.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> 已启用';
     statusElement.className = 'text-sm font-medium px-2 py-1 rounded-full bg-green-100 text-green-700';
   } else {
-    statusElement.innerHTML = '<i class="fas fa-times-circle text-red-500"></i> 已禁用';
+    statusElement.innerHTML = '<i class="fas fa-snowflake text-blue-500"></i> 已冻结';
     statusElement.className = 'text-sm font-medium px-2 py-1 rounded-full bg-red-100 text-red-700';
   }
 }
@@ -2312,16 +2333,14 @@ function displayPageLegacy(type, page, keyItemsArray) {
   // Update current page based on type
   if (type === "valid") {
     validCurrentPage = page;
-    // Read itemsPerPage from the select specifically for valid keys
-    const itemsPerPageSelect = document.getElementById("itemsPerPageSelect");
-    itemsPerPage = itemsPerPageSelect
-      ? parseInt(itemsPerPageSelect.value, 10)
-      : 10;
-  } else {
+  } else if (type === "invalid") {
     invalidCurrentPage = page;
-    // For invalid keys, use a fixed itemsPerPage or the same global one
-    // itemsPerPage = 10; // Or read from a different select if needed
+  } else if (type === "disabled") {
+    disabledCurrentPage = page;
   }
+
+  // 使用全局的itemsPerPage变量，不要重新读取select的值
+  // 这样可以避免竞态条件导致的分页大小不一致问题
 
   const totalItems = keyItemsArray.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage);
@@ -2377,7 +2396,7 @@ function displayPageLegacy(type, page, keyItemsArray) {
     if (type === "valid") {
       typeText = "有效";
     } else if (type === "disabled") {
-      typeText = "已禁用";
+      typeText = "已冻结";
     }
     emptyMsg.textContent = `暂无${typeText}密钥`;
     listElement.appendChild(emptyMsg);
@@ -2608,7 +2627,7 @@ function showBatchSearchResults(searchResponse) {
       </span>`;
 
       if (info.disabled) {
-        statusBadges += ' <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800"><i class="fas fa-ban mr-1"></i>已禁用</span>';
+        statusBadges += ' <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><i class="fas fa-snowflake mr-1"></i>已冻结</span>';
       }
 
       if (info.frozen) {
