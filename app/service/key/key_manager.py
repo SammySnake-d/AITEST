@@ -414,55 +414,112 @@ class KeyManager:
         search: str = None,
         fail_count_threshold: int = 0
     ) -> dict:
-        """获取分页的API key列表"""
-        # 首先获取所有密钥状态
-        all_keys_status = await self.get_keys_by_status()
+        """获取分页的API key列表（优化版本，避免处理所有密钥）"""
 
-        # 根据类型选择对应的密钥
+        # 优化：直接按类型处理密钥，避免先获取所有密钥状态
+        keys_list = []
+
         if key_type == "valid":
-            target_keys = all_keys_status["valid_keys"]
+            # 只处理有效密钥
+            async with self.failure_count_lock:
+                for key in self.api_keys:
+                    fail_count = self.key_failure_counts[key]
+
+                    # 快速检查：失败次数过多直接跳过
+                    if fail_count >= self.MAX_FAILURES:
+                        continue
+
+                    # 检查是否被冻结或禁用（只对可能有效的密钥检查）
+                    if await self.is_key_frozen(key) or await self.is_key_disabled(key):
+                        continue
+
+                    # 应用失败次数阈值过滤
+                    if fail_count_threshold > 0 and fail_count < fail_count_threshold:
+                        continue
+
+                    # 应用搜索过滤
+                    if search and search.lower() not in key.lower():
+                        continue
+
+                    keys_list.append({
+                        "key": key,
+                        "fail_count": fail_count,
+                        "disabled": False,
+                        "frozen": False
+                    })
+
         elif key_type == "invalid":
-            target_keys = all_keys_status["invalid_keys"]
+            # 只处理无效密钥
+            async with self.failure_count_lock:
+                for key in self.api_keys:
+                    fail_count = self.key_failure_counts[key]
+
+                    # 只包含失败次数达到上限且未被冻结的密钥
+                    if fail_count < self.MAX_FAILURES:
+                        continue
+
+                    if await self.is_key_frozen(key) or await self.is_key_disabled(key):
+                        continue
+
+                    # 应用搜索过滤
+                    if search and search.lower() not in key.lower():
+                        continue
+
+                    keys_list.append({
+                        "key": key,
+                        "fail_count": fail_count,
+                        "disabled": False,
+                        "frozen": False
+                    })
+
         elif key_type == "disabled" or key_type == "frozen":
-            target_keys = all_keys_status["frozen_keys"]
+            # 只处理冻结/禁用的密钥
+            async with self.key_state_lock:
+                # 检查手动冻结的密钥
+                for key in self.manually_frozen_keys:
+                    if search and search.lower() not in key.lower():
+                        continue
+
+                    async with self.failure_count_lock:
+                        fail_count = self.key_failure_counts.get(key, 0)
+
+                    keys_list.append({
+                        "key": key,
+                        "fail_count": fail_count,
+                        "disabled": True,
+                        "frozen": True
+                    })
+
+                # 检查自动冻结的密钥（清理过期的）
+                current_time = datetime.now()
+                expired_keys = []
+                for key, freeze_until in self.frozen_keys.items():
+                    if current_time >= freeze_until:
+                        expired_keys.append(key)
+                        continue
+
+                    if search and search.lower() not in key.lower():
+                        continue
+
+                    async with self.failure_count_lock:
+                        fail_count = self.key_failure_counts.get(key, 0)
+
+                    keys_list.append({
+                        "key": key,
+                        "fail_count": fail_count,
+                        "disabled": True,
+                        "frozen": True
+                    })
+
+                # 清理过期的冻结密钥
+                for key in expired_keys:
+                    del self.frozen_keys[key]
+                    logger.info(f"Key {redact_key_for_logging(key)} auto-unfrozen (freeze period expired)")
         else:
             raise ValueError(f"Invalid key_type: {key_type}")
 
-        # 转换为列表以便处理
-        keys_list = []
-        for key, key_info in target_keys.items():
-            # 确保key_info是字典格式
-            if isinstance(key_info, dict):
-                fail_count = key_info.get("fail_count", 0)
-                disabled = key_info.get("disabled", False)
-                frozen = key_info.get("frozen", False)
-            else:
-                # 兼容旧格式（直接是失败次数）
-                fail_count = key_info
-                disabled = await self.is_key_disabled(key)
-                frozen = await self.is_key_frozen(key)
-
-            keys_list.append({
-                "key": key,
-                "fail_count": fail_count,
-                "disabled": disabled,
-                "frozen": frozen
-            })
-
-        # 应用搜索过滤
-        if search:
-            search_lower = search.lower()
-            keys_list = [
-                item for item in keys_list
-                if search_lower in item["key"].lower()
-            ]
-
-        # 应用失败次数阈值过滤（仅对valid类型有效）
-        if key_type == "valid" and fail_count_threshold > 0:
-            keys_list = [
-                item for item in keys_list
-                if item["fail_count"] >= fail_count_threshold
-            ]
+        # 按密钥名称排序以保证一致性
+        keys_list.sort(key=lambda x: x["key"])
 
         # 计算分页信息
         total_count = len(keys_list)
@@ -478,7 +535,7 @@ class KeyManager:
         # 获取当前页的数据
         page_keys = keys_list[start_index:end_index]
 
-        # 转换回字典格式以保持兼容性
+        # 转换为字典格式以保持兼容性
         paginated_keys = {}
         for item in page_keys:
             key = item["key"]
@@ -1044,55 +1101,55 @@ class KeyManager:
             return None  # 返回None表示检查出错
 
     async def _validate_key_with_api(self, key: str) -> bool:
-        """使用API验证密钥有效性"""
+        """使用API验证密钥有效性（使用与验证功能相同的POST请求以正确检测429错误）"""
         try:
-            import aiohttp
-            import json
+            # 使用与单个验证和批量验证相同的方式：真实的聊天API调用
+            from app.service.chat.gemini_chat_service import GeminiChatService
+            from app.model.gemini_request import GeminiRequest, GeminiContent
 
-            # 构造验证请求
-            url = f"{settings.BASE_URL}/models"
-            headers = {
-                "x-goog-api-key": key,
-                "Content-Type": "application/json"
-            }
+            # 创建聊天服务实例
+            chat_service = GeminiChatService()
 
-            logger.debug(f"Precheck: Validating key {redact_key_for_logging(key)} with URL: {url}")
+            # 构造与验证功能相同的测试请求
+            gemini_request = GeminiRequest(
+                contents=[GeminiContent(role="user", parts=[{"text": "hi"}])],
+                generation_config={"temperature": 0.7, "topP": 1.0, "maxOutputTokens": 10}
+            )
 
-            timeout = aiohttp.ClientTimeout(total=10)  # 10秒超时
+            logger.debug(f"Precheck: Validating key {redact_key_for_logging(key)} with chat API (can detect 429)")
 
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, headers=headers) as response:
-                    logger.debug(f"Precheck: Key {redact_key_for_logging(key)} validation response: {response.status}")
+            # 执行与验证功能相同的API调用
+            await chat_service.generate_content(
+                settings.TEST_MODEL,
+                gemini_request,
+                key
+            )
 
-                    if response.status == 200:
-                        logger.debug(f"Precheck: Key {redact_key_for_logging(key)} is valid")
-                        return True
-                    elif response.status == 429:
-                        # 429错误，冷冻密钥（预检中不记录为warning，避免日志噪音）
-                        if settings.ENABLE_KEY_FREEZE_ON_429:
-                            await self.freeze_key(key)
-                            logger.info(f"Precheck: Key {redact_key_for_logging(key)} frozen due to 429 error")
-                        else:
-                            # 如果不启用冻结功能，则标记为无效
-                            async with self.failure_count_lock:
-                                self.key_failure_counts[key] = self.MAX_FAILURES
-                                logger.info(f"Precheck: Key {redact_key_for_logging(key)} marked as invalid due to 429 error (freeze disabled)")
-                        return False
-                    elif response.status in [400, 401, 403]:
-                        # 400等错误，立即标记为无效（预检中不记录为warning，避免日志噪音）
-                        async with self.failure_count_lock:
-                            self.key_failure_counts[key] = self.MAX_FAILURES
-                            logger.info(f"Precheck: Key {redact_key_for_logging(key)} marked as invalid due to {response.status} error")
-                        return False
-                    else:
-                        logger.debug(f"Key validation failed with status {response.status}: {redact_key_for_logging(key)}")
-                        return False
+            logger.debug(f"Precheck: Key {redact_key_for_logging(key)} is valid")
+            # 如果密钥验证成功，重置其失败计数（与验证功能保持一致）
+            await self.reset_key_failure_count(key)
+            return True
 
-        except asyncio.TimeoutError:
-            logger.debug(f"Key validation timeout: {redact_key_for_logging(key)}")
-            return False
         except Exception as e:
-            logger.debug(f"Key validation error: {redact_key_for_logging(key)}, error: {e}")
+            error_message = str(e)
+            logger.debug(f"Precheck: Key {redact_key_for_logging(key)} validation failed: {error_message}")
+
+            # 使用与验证功能相同的错误处理逻辑
+            is_429_error = "429" in error_message or "Too Many Requests" in error_message or "quota" in error_message.lower()
+
+            if is_429_error and settings.ENABLE_KEY_FREEZE_ON_429:
+                # 对于429错误，冷冻密钥
+                await self.handle_429_error(key)
+                logger.info(f"Precheck: Key {redact_key_for_logging(key)} frozen due to 429 error")
+            else:
+                # 对于其他错误，使用正常的失败处理逻辑
+                async with self.failure_count_lock:
+                    if key in self.key_failure_counts:
+                        self.key_failure_counts[key] += 1
+                    else:
+                        self.key_failure_counts[key] = 1
+                    logger.debug(f"Precheck: Key {redact_key_for_logging(key)} failure count updated")
+
             return False
 
     async def update_precheck_config(self, enabled: bool = None, count: int = None, trigger_ratio: float = None):
