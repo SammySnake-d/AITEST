@@ -945,6 +945,7 @@ class KeyManager:
             keys_to_check = self._get_precheck_keys(start_index, batch_size)
 
             logger.info(f"Precheck starting from position: {start_index} (last_position: {self.precheck_last_position})")
+            logger.info(f"Precheck will cover positions: {start_index} to {(start_index + batch_size - 1) % len(self.api_keys)} (batch_size: {batch_size})")
 
             if not keys_to_check:
                 logger.warning("No keys to check in precheck - _get_precheck_keys returned empty list")
@@ -1097,8 +1098,9 @@ class KeyManager:
             # 修正数据
             self.current_batch_valid_count = len(self.current_batch_valid_keys)
 
-        logger.debug(f"Updated compatibility fields: current_batch_valid_count={self.current_batch_valid_count}, current_batch_valid_keys={self.current_batch_valid_keys}")
-        logger.debug(f"Next batch: next_batch_valid_count={self.next_batch_valid_count}, next_batch_ready={self.next_batch_ready}")
+        logger.info(f"Updated compatibility fields: current_batch_valid_count={self.current_batch_valid_count}, current_batch_valid_keys={self.current_batch_valid_keys[:10]}{'...' if len(self.current_batch_valid_keys) > 10 else ''}")
+        logger.info(f"Next batch: next_batch_valid_count={self.next_batch_valid_count}, next_batch_ready={self.next_batch_ready}")
+        logger.info(f"Current batch details: batch_name={self.current_batch_name}, batch_index={self.current_batch_index}, used_count={self.valid_keys_used_count}")
 
     async def _precheck_single_key(self, key: str) -> bool:
         """预检单个密钥（改进版本）"""

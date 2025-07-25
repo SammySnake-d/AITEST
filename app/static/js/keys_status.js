@@ -2327,15 +2327,16 @@ function updatePrecheckStatsInfo(config) {
     triggerThresholdElement.textContent = config.valid_keys_trigger_threshold || 0;
   }
 
-  // 更新有效密钥位置
+  // 更新当前指针位置
   const validKeysPositionsElement = document.getElementById('precheckValidKeysPositions');
   if (validKeysPositionsElement) {
     const positions = config.current_batch_valid_keys || [];
-    if (positions.length > 0) {
-      validKeysPositionsElement.textContent = positions.join(', ');
-    } else {
-      validKeysPositionsElement.textContent = '暂无有效密钥';
-    }
+    const currentKeyPosition = config.current_key_position || 0;
+    const currentBatchIndex = config.current_batch_index || 0;
+
+    // 只显示当前指针位置和批次指针
+    let displayText = `当前指针: ${currentKeyPosition} | 批次指针: ${currentBatchIndex}/${positions.length}`;
+    validKeysPositionsElement.textContent = displayText;
   }
 
   // 更新下一批次状态
