@@ -2121,7 +2121,6 @@ async function loadPrecheckConfig() {
 
       // 更新状态显示
       updatePrecheckStatus(config.enabled);
-      updatePrecheckStatusInfo(config);
       updatePrecheckStatsInfo(config);
 
       console.log('Precheck config loaded:', config);
@@ -2232,7 +2231,6 @@ async function savePrecheckConfig() {
     if (response && response.success) {
       // 更新状态显示
       updatePrecheckStatus(enabled);
-      updatePrecheckStatusInfo(response.data);
       updatePrecheckStatsInfo(response.data);
       showNotification('预检配置保存成功', 'success');
       console.log('Precheck config saved:', response.data);
