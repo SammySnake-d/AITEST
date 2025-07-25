@@ -807,12 +807,15 @@ class KeyManager:
                     logger.error(f"Precheck task {i} failed: {result}")
 
             logger.info(f"Precheck completed: {len(valid_keys)} valid, {invalid_count} invalid, {error_count} errors")
+            logger.info(f"Valid keys found: {[key[:20] + '...' for key in valid_keys]}")
 
             # 更新预检位置（重要：确保下次从正确位置开始）
             self.precheck_last_position = (start_index + batch_size) % len(self.api_keys)
             logger.info(f"Next precheck will start from position: {self.precheck_last_position}")
 
             # 判断是否应该建立新批次或加入下一批次队列
+            logger.info(f"Current batch status: current_valid_keys={len(self.current_valid_keys)}, next_batch_ready={self.next_batch_ready}")
+
             if not self.current_valid_keys:
                 # 初始预检或当前批次为空，直接建立新批次
                 logger.info(f"Establishing initial batch: {len(valid_keys)} valid keys")
@@ -830,6 +833,8 @@ class KeyManager:
 
     def _establish_new_batch(self, valid_keys: list):
         """建立新的有效密钥批次"""
+        logger.info(f"Establishing new batch with {len(valid_keys)} valid keys")
+
         self.current_valid_keys = valid_keys.copy()
         self.current_valid_index = 0
         self.current_valid_count = len(valid_keys)
@@ -842,6 +847,7 @@ class KeyManager:
         self._update_compatibility_fields()
 
         logger.info(f"New batch established: {len(valid_keys)} valid keys, trigger threshold: {self.valid_keys_trigger_threshold}")
+        logger.info(f"Compatibility fields updated: current_batch_valid_count={self.current_batch_valid_count}")
 
     def _queue_next_batch(self, valid_keys: list):
         """将有效密钥加入下一批次队列"""
@@ -924,9 +930,7 @@ class KeyManager:
 
 
 
-    async def _precheck_single_key(self, key: str):
-        """预检单个密钥（兼容性方法）"""
-        return await self._precheck_single_key_with_position(key, -1)
+    # 移除重复的方法定义，使用上面的实现
 
     async def _precheck_single_key_with_position(self, key: str, position: int):
         """预检单个密钥并返回是否有效"""
@@ -1071,12 +1075,17 @@ class KeyManager:
         try:
             logger.info("Manual precheck triggered by user")
 
-            # 记录触发前的状态
+            # 确保兼容性字段是最新的
+            self._update_compatibility_fields()
+
+            # 记录触发前的状态（使用新的数据结构）
             before_state = {
-                "current_batch_valid_count": self.current_batch_valid_count,
-                "valid_keys_passed_count": self.valid_keys_used_count,  # 修复字段名
+                "current_batch_valid_count": self.current_valid_count,  # 使用新字段
+                "valid_keys_passed_count": self.valid_keys_used_count,
                 "trigger_threshold": self.valid_keys_trigger_threshold
             }
+
+            logger.info(f"Before precheck: valid_count={self.current_valid_count}, used_count={self.valid_keys_used_count}")
 
             # 执行预检
             await self._perform_precheck_async()
@@ -1088,12 +1097,17 @@ class KeyManager:
                 await asyncio.sleep(1)
                 wait_count += 1
 
-            # 记录触发后的状态
+            # 更新兼容性字段
+            self._update_compatibility_fields()
+
+            # 记录触发后的状态（使用新的数据结构）
             after_state = {
-                "current_batch_valid_count": self.current_batch_valid_count,
-                "valid_keys_passed_count": self.valid_keys_used_count,  # 修复字段名
+                "current_batch_valid_count": self.current_valid_count,  # 使用新字段
+                "valid_keys_passed_count": self.valid_keys_used_count,
                 "trigger_threshold": self.valid_keys_trigger_threshold
             }
+
+            logger.info(f"After precheck: valid_count={self.current_valid_count}, used_count={self.valid_keys_used_count}")
 
             logger.info(f"Manual precheck completed. Before: {before_state}, After: {after_state}")
 
