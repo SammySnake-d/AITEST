@@ -709,7 +709,6 @@ async def update_precheck_config(
             "valid_keys_trigger_threshold": key_manager.valid_keys_trigger_threshold,
             "current_batch_valid_keys": key_manager.current_batch_valid_keys,  # 返回完整的有效密钥位置列表
             "current_key_position": key_manager.get_current_key_position(),  # 当前密钥指针位置
-            "current_batch_index": key_manager.current_batch_index,  # 当前批次内的指针位置
             "next_batch_ready": key_manager.next_batch_ready,  # 使用实际状态
             "next_batch_valid_count": key_manager.next_valid_count  # 使用实际数据
         }

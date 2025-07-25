@@ -1290,9 +1290,14 @@ endblock %} {% block head_extra_styles %}
           </div>
         </div>
         <!-- 密钥指针状态显示 -->
-        <div class="mb-4 p-3 bg-blue-50 rounded-lg">
-          <div class="text-sm font-medium text-gray-700 mb-2">密钥指针状态:</div>
-          <div id="precheckValidKeysPositions" class="text-xs text-blue-700 font-mono">-</div>
+        <div class="mb-4 p-3 bg-cyan-50 rounded-lg border border-cyan-200">
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-medium text-gray-700">
+              <i class="fas fa-location-arrow mr-2 text-cyan-600"></i>
+              当前指针状态:
+            </div>
+            <div id="precheckValidKeysPositions" class="text-xl font-bold text-cyan-700">-</div>
+          </div>
         </div>
         <div class="text-sm text-gray-600 mb-3">
           <i class="fas fa-info-circle mr-1"></i>

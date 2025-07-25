@@ -2330,13 +2330,8 @@ function updatePrecheckStatsInfo(config) {
   // 更新当前指针位置
   const validKeysPositionsElement = document.getElementById('precheckValidKeysPositions');
   if (validKeysPositionsElement) {
-    const positions = config.current_batch_valid_keys || [];
     const currentKeyPosition = config.current_key_position || 0;
-    const currentBatchIndex = config.current_batch_index || 0;
-
-    // 只显示当前指针位置和批次指针
-    let displayText = `当前指针: ${currentKeyPosition} | 批次指针: ${currentBatchIndex}/${positions.length}`;
-    validKeysPositionsElement.textContent = displayText;
+    validKeysPositionsElement.textContent = currentKeyPosition;
   }
 
   // 更新下一批次状态
