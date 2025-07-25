@@ -155,6 +155,13 @@ class KeyManager:
 
             return key
 
+    def get_current_key_position(self) -> int:
+        """获取当前密钥指针在api_keys列表中的位置"""
+        if not self.api_keys:
+            return 0
+        # 基于key_usage_counter计算当前位置
+        return (self.key_usage_counter - 1) % len(self.api_keys)
+
     async def get_next_vertex_key(self) -> str:
         """获取下一个 Vertex Express API key"""
         async with self.vertex_key_cycle_lock:
@@ -907,9 +914,12 @@ class KeyManager:
             # 使用配置的预检数量
             batch_size = self.precheck_count
 
-            # 计算预检起始位置（从上次结束位置开始，确保连续性）
-            start_index = self.precheck_last_position
+            # 计算预检起始位置（从当前密钥指针位置开始）
+            current_position = self.get_current_key_position()
+            start_index = current_position
             keys_to_check = self._get_precheck_keys(start_index, batch_size)
+
+            logger.info(f"Precheck starting from current key position: {current_position} (key_usage_counter: {self.key_usage_counter})")
 
             if not keys_to_check:
                 logger.warning("No keys to check in precheck")
@@ -950,6 +960,15 @@ class KeyManager:
             # 使用新的双缓冲机制处理预检结果
             current_batch = self._get_current_batch()
             logger.info(f"Current batch status: batch_{self.current_batch_name}={len(current_batch)}, next_batch_ready={self._is_next_batch_ready()}")
+            logger.info(f"Precheck found {len(valid_keys)} valid keys out of {len(keys_to_check)} checked")
+
+            # 检查是否找到了有效密钥
+            if len(valid_keys) == 0:
+                logger.warning("Precheck found no valid keys - all checked keys are invalid")
+                # 如果当前批次也为空，这是一个严重问题
+                if not current_batch or not self._is_current_batch_ready():
+                    logger.error("No valid keys found and no current batch available - system may have no working keys")
+                return
 
             if not current_batch or not self._is_current_batch_ready():
                 # 初始预检或当前批次为空，直接建立新批次
@@ -1037,39 +1056,61 @@ class KeyManager:
         self.next_valid_count = len(next_batch)  # 兼容性字段
 
     async def _precheck_single_key(self, key: str) -> bool:
-        """预检单个密钥（简化版本）"""
+        """预检单个密钥（改进版本）"""
         try:
-            # 检查密钥是否已经无效、禁用或冷冻
-            if not await self.is_key_valid(key):
-                logger.debug(f"Key {key[:20]}... already invalid, skipping precheck")
+            # 对于预检，我们要更宽松一些，即使失败次数较高也要尝试验证
+            # 只跳过明确被冻结或禁用的密钥
+            if await self.is_key_frozen(key) or await self.is_key_disabled(key):
+                logger.debug(f"Key {redact_key_for_logging(key)} is frozen/disabled, skipping precheck")
                 return False
 
             # 执行实际的API验证
             is_valid = await self._validate_key_with_api(key)
 
             if not is_valid:
-                logger.debug(f"Precheck detected invalid key: {key[:20]}...")
+                logger.debug(f"Precheck detected invalid key: {redact_key_for_logging(key)}")
                 return False
             else:
-                logger.debug(f"Precheck confirmed key validity: {key[:20]}...")
+                logger.debug(f"Precheck confirmed key validity: {redact_key_for_logging(key)}")
                 return True
 
         except Exception as e:
-            logger.error(f"Error in precheck single key: {e}")
+            logger.error(f"Error in precheck single key {redact_key_for_logging(key)}: {e}")
             return False
 
 
 
     def _get_precheck_keys(self, start_index: int, count: int) -> List[str]:
-        """获取预检密钥列表"""
+        """获取预检密钥列表（优先选择可能有效的密钥）"""
         if not self.api_keys or count <= 0:
             return []
 
-        keys = []
-        for i in range(count):
-            index = (start_index + i) % len(self.api_keys)
-            keys.append(self.api_keys[index])
+        # 首先尝试获取可能有效的密钥（失败次数较少的）
+        potentially_valid_keys = []
+        for key in self.api_keys:
+            fail_count = self.key_failure_counts.get(key, 0)
+            if fail_count < self.MAX_FAILURES:
+                potentially_valid_keys.append(key)
 
+        # 如果有足够的可能有效密钥，优先使用它们
+        if len(potentially_valid_keys) >= count:
+            # 从start_index开始循环选择
+            keys = []
+            for i in range(count):
+                index = (start_index + i) % len(potentially_valid_keys)
+                keys.append(potentially_valid_keys[index])
+            logger.info(f"Precheck selecting {len(keys)} potentially valid keys (fail_count < {self.MAX_FAILURES})")
+            return keys
+
+        # 如果可能有效的密钥不够，则包含所有密钥但优先选择失败次数少的
+        all_keys_with_priority = sorted(self.api_keys, key=lambda k: self.key_failure_counts.get(k, 0))
+
+        keys = []
+        for i in range(min(count, len(all_keys_with_priority))):
+            index = (start_index + i) % len(all_keys_with_priority)
+            keys.append(all_keys_with_priority[index])
+
+        logger.info(f"Precheck selecting {len(keys)} keys (including some with higher fail counts)")
         return keys
 
 
@@ -1101,32 +1142,33 @@ class KeyManager:
             return None  # 返回None表示检查出错
 
     async def _validate_key_with_api(self, key: str) -> bool:
-        """使用API验证密钥有效性（使用与验证功能相同的POST请求以正确检测429错误）"""
+        """使用API验证密钥有效性（完全复制批量验证的逻辑）"""
         try:
-            # 使用与单个验证和批量验证相同的方式：真实的聊天API调用
+            # 完全复制批量验证中的验证逻辑
             from app.service.chat.gemini_chat_service import GeminiChatService
             from app.model.gemini_request import GeminiRequest, GeminiContent
 
-            # 创建聊天服务实例
+            # 获取聊天服务实例（与批量验证相同）
             chat_service = GeminiChatService()
 
-            # 构造与验证功能相同的测试请求
+            # 构造与批量验证完全相同的测试请求
             gemini_request = GeminiRequest(
                 contents=[GeminiContent(role="user", parts=[{"text": "hi"}])],
                 generation_config={"temperature": 0.7, "topP": 1.0, "maxOutputTokens": 10}
             )
 
-            logger.debug(f"Precheck: Validating key {redact_key_for_logging(key)} with chat API (can detect 429)")
+            logger.debug(f"Precheck: Validating key {redact_key_for_logging(key)} using batch verification logic")
 
-            # 执行与验证功能相同的API调用
+            # 执行与批量验证完全相同的API调用
             await chat_service.generate_content(
                 settings.TEST_MODEL,
                 gemini_request,
                 key
             )
 
+            # 验证成功 - 与批量验证相同的处理
             logger.debug(f"Precheck: Key {redact_key_for_logging(key)} is valid")
-            # 如果密钥验证成功，重置其失败计数（与验证功能保持一致）
+            # 如果密钥验证成功，则重置其失败计数（与批量验证保持一致）
             await self.reset_key_failure_count(key)
             return True
 
@@ -1134,21 +1176,22 @@ class KeyManager:
             error_message = str(e)
             logger.debug(f"Precheck: Key {redact_key_for_logging(key)} validation failed: {error_message}")
 
-            # 使用与验证功能相同的错误处理逻辑
+            # 完全复制批量验证的错误处理逻辑
             is_429_error = "429" in error_message or "Too Many Requests" in error_message or "quota" in error_message.lower()
 
             if is_429_error and settings.ENABLE_KEY_FREEZE_ON_429:
-                # 对于429错误，冷冻密钥
+                # 对于429错误，冷冻密钥而不是增加失败计数（与批量验证相同）
                 await self.handle_429_error(key)
                 logger.info(f"Precheck: Key {redact_key_for_logging(key)} frozen due to 429 error")
             else:
-                # 对于其他错误，使用正常的失败处理逻辑
+                # 对于其他错误，使用正常的失败处理逻辑（与批量验证相同）
                 async with self.failure_count_lock:
                     if key in self.key_failure_counts:
                         self.key_failure_counts[key] += 1
+                        logger.debug(f"Precheck: Key {redact_key_for_logging(key)}, incrementing failure count")
                     else:
                         self.key_failure_counts[key] = 1
-                    logger.debug(f"Precheck: Key {redact_key_for_logging(key)} failure count updated")
+                        logger.debug(f"Precheck: Key {redact_key_for_logging(key)}, initializing failure count to 1")
 
             return False
 

@@ -336,7 +336,7 @@ class GeminiChatService:
         return response_copy
 
     async def generate_content(
-        self, model: str, request: GeminiRequest, api_key: str
+        self, model: str, request: GeminiRequest, api_key: str, silent_mode: bool = False
     ) -> Dict[str, Any]:
         """生成内容"""
         # 檢查並獲取文件專用的 API key（如果有文件）
