@@ -75,6 +75,7 @@ class KeyManager:
         self.next_batch_valid_keys = []  # 下一批次有效密钥位置列表
         self.next_batch_valid_count = 0  # 下一批次有效密钥总数
         self.next_batch_ready = False  # 下一批次是否准备就绪
+        self.next_valid_count = 0  # 兼容性字段：下一批次有效密钥数量
         self.precheck_base_position = 0  # 当前预检批次的起始位置
 
         # API调用统计（简化）
@@ -643,6 +644,8 @@ class KeyManager:
         async with self.vertex_key_state_lock:
             return key in self.manually_frozen_vertex_keys or key in self.disabled_vertex_keys
 
+
+
     # 批量操作方法
     async def batch_disable_keys(self, keys: List[str]) -> Dict[str, bool]:
         """批量禁用密钥"""
@@ -781,13 +784,15 @@ class KeyManager:
         if not self.precheck_enabled:
             return True
 
-        # 计算剩余的有效密钥数量
-        remaining_valid_keys = self.current_batch_valid_count - self.valid_keys_used_count
+        # 使用新的双缓冲机制计算剩余的有效密钥数量
+        current_batch = self._get_current_batch()
+        current_batch_count = len(current_batch)
+        remaining_valid_keys = current_batch_count - self.valid_keys_used_count
 
         # 检查剩余有效密钥数量是否足够应对当前的调用频率
         if self.last_minute_calls > 0:
             # 预估需要的有效密钥数量（考虑1分钟的调用量）
-            estimated_needed = min(self.last_minute_calls, self.current_batch_valid_count)
+            estimated_needed = min(self.last_minute_calls, current_batch_count)
 
             if remaining_valid_keys < estimated_needed:
                 logger.warning(f"Precheck safety check failed: remaining_valid_keys={remaining_valid_keys}, needed={estimated_needed}")
@@ -972,7 +977,7 @@ class KeyManager:
 
         self.next_batch_valid_count = len(next_batch)
         self.next_batch_ready = self._is_next_batch_ready()
-        self.next_valid_count = len(next_batch)
+        self.next_valid_count = len(next_batch)  # 兼容性字段
 
     async def _precheck_single_key(self, key: str) -> bool:
         """预检单个密钥（简化版本）"""
@@ -1232,18 +1237,15 @@ class KeyManager:
                 logger.info(f"Manual precheck SUCCESS: Found {len(current_batch_after)} valid keys in batch {self.current_batch_name}")
             else:
                 logger.warning(f"Manual precheck FAILED: No valid keys found")
-                # 检查失败原因
-                frozen_count = len(await self.get_frozen_keys())
-                disabled_count = len(await self.get_disabled_keys())
-                logger.warning(f"Key status: frozen={frozen_count}, disabled={disabled_count}, total={len(self.api_keys)}")
-
-                # 检查失败计数
+                # 简化的失败原因诊断（线程安全）
+                async with self.key_state_lock:
+                    frozen_count = len(self.frozen_keys) + len(self.manually_frozen_keys)
                 high_failure_keys = 0
                 async with self.failure_count_lock:
                     for key, count in self.key_failure_counts.items():
                         if count >= self.MAX_FAILURES:
                             high_failure_keys += 1
-                logger.warning(f"Keys with high failure count (>={self.MAX_FAILURES}): {high_failure_keys}")
+                logger.warning(f"Key status: frozen={frozen_count}, high_failure={high_failure_keys}, total={len(self.api_keys)}")
 
             logger.info(f"Manual precheck completed. Before: {before_state}, After: {after_state}")
 
