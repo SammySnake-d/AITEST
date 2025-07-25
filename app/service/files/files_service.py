@@ -61,7 +61,7 @@ class FilesService:
         try:
             # 获取可用的 API key
             key_manager = await self._get_key_manager()
-            api_key = await key_manager.get_next_key()
+            api_key = await key_manager.get_next_working_key()
             
             if not api_key:
                 raise HTTPException(status_code=503, detail="No available API keys")

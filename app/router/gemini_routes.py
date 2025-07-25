@@ -401,13 +401,24 @@ async def verify_selected_keys(
         except Exception as e:
             error_message = str(e)
             logger.warning(f"Key verification failed for {redact_key_for_logging(api_key)}: {error_message}")
-            async with key_manager.failure_count_lock:
-                if api_key in key_manager.key_failure_counts:
-                    key_manager.key_failure_counts[api_key] += 1
-                    logger.warning(f"Bulk verification exception for key: {redact_key_for_logging(api_key)}, incrementing failure count")
-                else:
-                     key_manager.key_failure_counts[api_key] = 1
-                     logger.warning(f"Bulk verification exception for key: {redact_key_for_logging(api_key)}, initializing failure count to 1")
+
+            # 检查是否是429错误，如果是则调用专门的429错误处理机制
+            is_429_error = "429" in error_message or "Too Many Requests" in error_message or "quota" in error_message.lower()
+
+            if is_429_error and settings.ENABLE_KEY_FREEZE_ON_429:
+                # 对于429错误，冷冻密钥而不是增加失败计数
+                await key_manager.handle_429_error(api_key)
+                logger.info(f"Bulk verification: Key {redact_key_for_logging(api_key)} frozen due to 429 error")
+            else:
+                # 对于其他错误，使用正常的失败处理逻辑
+                async with key_manager.failure_count_lock:
+                    if api_key in key_manager.key_failure_counts:
+                        key_manager.key_failure_counts[api_key] += 1
+                        logger.warning(f"Bulk verification exception for key: {redact_key_for_logging(api_key)}, incrementing failure count")
+                    else:
+                         key_manager.key_failure_counts[api_key] = 1
+                         logger.warning(f"Bulk verification exception for key: {redact_key_for_logging(api_key)}, initializing failure count to 1")
+
             failed_keys[api_key] = error_message
             return api_key, "invalid", error_message
 
