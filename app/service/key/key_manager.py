@@ -1190,7 +1190,7 @@ class KeyManager:
             from app.domain.gemini_models import GeminiRequest, GeminiContent, GenerationConfig
 
             # 获取聊天服务实例（与批量验证相同）
-            chat_service = GeminiChatService()
+            chat_service = GeminiChatService(settings.BASE_URL, self)
 
             # 构造与批量验证完全相同的测试请求
             gemini_request = GeminiRequest(
