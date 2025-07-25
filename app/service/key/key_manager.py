@@ -936,9 +936,8 @@ class KeyManager:
             return
 
         try:
-            # 使用配置的预检数量，但限制为最多3个用于调试
-            batch_size = min(3, self.precheck_count)
-            logger.info(f"Limiting precheck batch size to {batch_size} for debugging")
+            # 使用配置的预检数量
+            batch_size = self.precheck_count
 
             # 计算预检起始位置（从当前密钥指针位置开始）
             current_position = self.get_current_key_position()
@@ -1188,7 +1187,7 @@ class KeyManager:
         try:
             # 完全复制批量验证中的验证逻辑
             from app.service.chat.gemini_chat_service import GeminiChatService
-            from app.model.gemini_request import GeminiRequest, GeminiContent
+            from app.domain.gemini_models import GeminiRequest, GeminiContent, GenerationConfig
 
             # 获取聊天服务实例（与批量验证相同）
             chat_service = GeminiChatService()
@@ -1196,7 +1195,7 @@ class KeyManager:
             # 构造与批量验证完全相同的测试请求
             gemini_request = GeminiRequest(
                 contents=[GeminiContent(role="user", parts=[{"text": "hi"}])],
-                generation_config={"temperature": 0.7, "topP": 1.0, "maxOutputTokens": 10}
+                generation_config=GenerationConfig(temperature=0.7, topP=1.0, maxOutputTokens=10)
             )
 
             logger.info(f"Precheck: Starting API validation for key {redact_key_for_logging(key)}")
