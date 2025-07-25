@@ -939,12 +939,12 @@ class KeyManager:
             # 使用配置的预检数量
             batch_size = self.precheck_count
 
-            # 计算预检起始位置（从当前密钥指针位置开始）
-            current_position = self.get_current_key_position()
-            start_index = current_position
+            # 计算预检起始位置（动态变化，确保覆盖不同范围）
+            # 使用上次预检结束位置作为起点，确保预检范围不重复
+            start_index = self.precheck_last_position
             keys_to_check = self._get_precheck_keys(start_index, batch_size)
 
-            logger.info(f"Precheck starting from current key position: {current_position} (key_usage_counter: {self.key_usage_counter})")
+            logger.info(f"Precheck starting from position: {start_index} (last_position: {self.precheck_last_position})")
 
             if not keys_to_check:
                 logger.warning("No keys to check in precheck - _get_precheck_keys returned empty list")
@@ -980,8 +980,9 @@ class KeyManager:
             logger.info(f"Valid keys found: {[key[:20] + '...' for key in valid_keys]}")
 
             # 更新预检位置（重要：确保下次从正确位置开始）
+            old_position = self.precheck_last_position
             self.precheck_last_position = (start_index + batch_size) % len(self.api_keys)
-            logger.info(f"Next precheck will start from position: {self.precheck_last_position}")
+            logger.info(f"Precheck position updated: {old_position} -> {self.precheck_last_position} (covered range: {start_index}-{(start_index + batch_size - 1) % len(self.api_keys)})")
 
             # 使用新的双缓冲机制处理预检结果
             current_batch = self._get_current_batch()
@@ -1007,6 +1008,10 @@ class KeyManager:
                 # 将预检结果作为下一批次
                 logger.info(f"Queuing next batch: {len(valid_keys)} valid keys")
                 self._queue_next_batch_dual_buffer(valid_keys)
+
+            # 预检完成后，确保兼容性字段是最新的
+            self._update_compatibility_fields()
+            logger.info(f"Precheck completed: batch status updated, current_batch_valid_count={self.current_batch_valid_count}")
 
         except Exception as e:
             logger.error(f"Error in precheck operation: {e}")
@@ -1057,16 +1062,21 @@ class KeyManager:
         current_batch = self._get_current_batch()
         next_batch = self._get_next_batch()
 
-        # 将实际密钥转换为位置索引（用于兼容旧API）
+        # 将实际密钥转换为位置索引（显示在整个密钥池中的真实位置）
         self.current_batch_valid_keys = []
         for key in current_batch:
             try:
+                # 获取密钥在整个api_keys列表中的真实位置索引
                 position = self.api_keys.index(key)
                 self.current_batch_valid_keys.append(position)
             except ValueError:
                 logger.warning(f"Valid key not found in api_keys list: {key[:20]}...")
 
-        self.current_batch_valid_count = len(current_batch)
+        # 确保数量字段与实际批次一致
+        self.current_batch_valid_count = len(current_batch)  # 使用实际批次长度
+
+        # 对位置进行排序，便于前端显示
+        self.current_batch_valid_keys.sort()
 
         # 更新下一批次的兼容性字段
         self.next_batch_valid_keys = []
@@ -1077,9 +1087,18 @@ class KeyManager:
             except ValueError:
                 logger.warning(f"Next batch key not found in api_keys list: {key[:20]}...")
 
-        self.next_batch_valid_count = len(next_batch)
+        self.next_batch_valid_count = len(next_batch)  # 使用实际批次长度
         self.next_batch_ready = self._is_next_batch_ready()
         self.next_valid_count = len(next_batch)  # 兼容性字段
+
+        # 添加数据一致性检查和日志
+        if len(self.current_batch_valid_keys) != self.current_batch_valid_count:
+            logger.warning(f"Data inconsistency detected: current_batch_valid_keys length ({len(self.current_batch_valid_keys)}) != current_batch_valid_count ({self.current_batch_valid_count})")
+            # 修正数据
+            self.current_batch_valid_count = len(self.current_batch_valid_keys)
+
+        logger.debug(f"Updated compatibility fields: current_batch_valid_count={self.current_batch_valid_count}, current_batch_valid_keys={self.current_batch_valid_keys}")
+        logger.debug(f"Next batch: next_batch_valid_count={self.next_batch_valid_count}, next_batch_ready={self.next_batch_ready}")
 
     async def _precheck_single_key(self, key: str) -> bool:
         """预检单个密钥（改进版本）"""
@@ -1117,41 +1136,48 @@ class KeyManager:
 
 
     def _get_precheck_keys(self, start_index: int, count: int) -> List[str]:
-        """获取预检密钥列表（优先选择可能有效的密钥）"""
+        """获取预检密钥列表（动态选择不同范围的密钥）"""
         logger.info(f"_get_precheck_keys called: start_index={start_index}, count={count}, total_keys={len(self.api_keys) if self.api_keys else 0}")
 
         if not self.api_keys or count <= 0:
             logger.warning(f"_get_precheck_keys early return: api_keys={bool(self.api_keys)}, count={count}")
             return []
 
-        # 首先尝试获取可能有效的密钥（失败次数较少的）
-        potentially_valid_keys = []
-        for key in self.api_keys:
+        # 使用动态选择策略：从start_index开始，连续选择count个密钥
+        # 这样可以确保每次预检都覆盖不同的密钥范围
+        keys = []
+        total_keys = len(self.api_keys)
+
+        for i in range(count):
+            # 从start_index开始，循环选择密钥
+            key_index = (start_index + i) % total_keys
+            key = self.api_keys[key_index]
+
+            # 检查密钥是否值得预检（不是明显无效的）
             fail_count = self.key_failure_counts.get(key, 0)
             if fail_count < self.MAX_FAILURES:
-                potentially_valid_keys.append(key)
+                keys.append(key)
+            else:
+                # 即使失败次数高，也给一些密钥重新验证的机会
+                # 这样可以发现之前暂时失效但现在恢复的密钥
+                if i % 3 == 0:  # 每3个密钥中给1个高失败次数的密钥机会
+                    keys.append(key)
+                    logger.debug(f"Including high-failure key for retry: {key[:20]}... (fail_count: {fail_count})")
 
-        logger.info(f"Found {len(potentially_valid_keys)} potentially valid keys (fail_count < {self.MAX_FAILURES}) out of {len(self.api_keys)} total keys")
+        logger.info(f"Precheck selected {len(keys)} keys from range [{start_index}, {(start_index + count - 1) % total_keys}]")
 
-        # 如果有足够的可能有效密钥，优先使用它们
-        if len(potentially_valid_keys) >= count:
-            # 从start_index开始循环选择
-            keys = []
-            for i in range(count):
-                index = (start_index + i) % len(potentially_valid_keys)
-                keys.append(potentially_valid_keys[index])
-            logger.info(f"Precheck selecting {len(keys)} potentially valid keys (fail_count < {self.MAX_FAILURES})")
-            return keys
+        # 如果选择的密钥太少，补充一些可能有效的密钥
+        if len(keys) < count // 2:
+            logger.info("Too few keys selected, adding potentially valid keys...")
+            potentially_valid_keys = [k for k in self.api_keys if self.key_failure_counts.get(k, 0) < self.MAX_FAILURES]
 
-        # 如果可能有效的密钥不够，则包含所有密钥但优先选择失败次数少的
-        all_keys_with_priority = sorted(self.api_keys, key=lambda k: self.key_failure_counts.get(k, 0))
+            # 添加一些可能有效的密钥，但避免重复
+            for key in potentially_valid_keys:
+                if key not in keys and len(keys) < count:
+                    keys.append(key)
 
-        keys = []
-        for i in range(min(count, len(all_keys_with_priority))):
-            index = (start_index + i) % len(all_keys_with_priority)
-            keys.append(all_keys_with_priority[index])
+            logger.info(f"After supplementing: {len(keys)} keys selected")
 
-        logger.info(f"Precheck selecting {len(keys)} keys (including some with higher fail counts)")
         return keys
 
 
@@ -1226,12 +1252,20 @@ class KeyManager:
                 # 对于429错误，冷冻密钥而不是增加失败计数（与批量验证相同）
                 await self.handle_429_error(key)
                 logger.info(f"Precheck: Key {redact_key_for_logging(key)} frozen due to 429 error")
+                # 立即更新兼容性字段，确保状态变化实时反映
+                self._update_compatibility_fields()
             else:
                 # 对于其他错误，使用正常的失败处理逻辑（与批量验证相同）
                 async with self.failure_count_lock:
                     if key in self.key_failure_counts:
                         self.key_failure_counts[key] += 1
                         logger.info(f"Precheck: Key {redact_key_for_logging(key)}, incrementing failure count to {self.key_failure_counts[key]}")
+
+                        # 检查是否达到无效阈值
+                        if self.key_failure_counts[key] >= self.MAX_FAILURES:
+                            logger.info(f"Precheck: Key {redact_key_for_logging(key)} marked as invalid (failure count: {self.key_failure_counts[key]})")
+                            # 立即更新兼容性字段，确保状态变化实时反映
+                            self._update_compatibility_fields()
                     else:
                         self.key_failure_counts[key] = 1
                         logger.info(f"Precheck: Key {redact_key_for_logging(key)}, initializing failure count to 1")
