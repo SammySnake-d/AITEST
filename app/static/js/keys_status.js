@@ -2135,6 +2135,55 @@ async function loadPrecheckConfig() {
 }
 
 /**
+ * 手动触发预检
+ */
+async function manualTriggerPrecheck() {
+  const triggerButton = document.getElementById('manualPrecheckBtn');
+  if (!triggerButton) {
+    showNotification('预检按钮未找到', 'error');
+    return;
+  }
+
+  try {
+    // 显示执行状态
+    triggerButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 执行中...';
+    triggerButton.disabled = true;
+
+    // 发送手动预检请求
+    const response = await fetchAPI('/gemini/v1beta/manual-precheck', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response && response.success) {
+      showNotification('预检执行成功', 'success');
+      console.log('Manual precheck result:', response.data);
+
+      // 刷新预检配置显示
+      await loadPrecheckConfig();
+
+      // 显示执行结果
+      if (response.data) {
+        const { before, after, execution_time } = response.data;
+        const message = `预检完成！执行前: ${before.current_batch_valid_count} 个有效密钥，执行后: ${after.current_batch_valid_count} 个有效密钥，执行时间: ${execution_time} 秒`;
+        showNotification(message, 'success', 5000);
+      }
+    } else {
+      throw new Error(response?.message || '手动预检失败');
+    }
+  } catch (error) {
+    console.error('Manual precheck error:', error);
+    showNotification(`手动预检失败: ${error.message}`, 'error');
+  } finally {
+    // 恢复按钮状态
+    triggerButton.innerHTML = '<i class="fas fa-play"></i> 立即预检';
+    triggerButton.disabled = false;
+  }
+}
+
+/**
  * 保存预检配置
  */
 async function savePrecheckConfig() {
@@ -2266,7 +2315,7 @@ function updatePrecheckStatsInfo(config) {
     batchValidCountElement.textContent = config.current_batch_valid_count || 0;
   }
 
-  // 更新已过有效密钥数
+  // 更新已过有效密钥数（使用简化的字段名）
   const validKeysPassedElement = document.getElementById('precheckValidKeysPassedCount');
   if (validKeysPassedElement) {
     validKeysPassedElement.textContent = config.valid_keys_passed_count || 0;

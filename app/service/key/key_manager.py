@@ -39,53 +39,34 @@ class KeyManager:
         self.key_state_lock = asyncio.Lock()  # 密钥状态锁
         self.vertex_key_state_lock = asyncio.Lock()  # Vertex密钥状态锁
 
-        # 预检机制（简化配置）
+        # 简化的预检机制（只保留核心参数）
         self.precheck_enabled = settings.KEY_PRECHECK_ENABLED
         self.precheck_count = settings.KEY_PRECHECK_COUNT
         self.precheck_trigger_ratio = settings.KEY_PRECHECK_TRIGGER_RATIO
         self.precheck_lock = asyncio.Lock()  # 预检锁
 
-        # 固定的内部参数（不再通过配置暴露）
-        self.precheck_min_keys_multiplier = 2  # 密钥数量必须是并发数的2倍才启用预检（降低要求）
-        self.precheck_estimated_concurrent = 5  # 估计的每秒并发请求数（降低要求）
-        self.precheck_dynamic_adjustment = True  # 启用动态调整
-        self.precheck_safety_buffer_ratio = 1.5  # 安全缓冲比例
-        self.precheck_min_reserve_ratio = 0.3  # 最小保留比例
-
-        # 预检状态跟踪（基于有效密钥比例）
-        self.precheck_current_batch_size = 0  # 当前批次的预检数量
+        # 简化的预检状态跟踪
         self.precheck_in_progress = False  # 是否正在进行预检
         self.precheck_last_position = 0  # 上次预检的结束位置
-        self.precheck_base_position = 0  # 当前预检批次的起始位置
-        self.key_usage_counter = 0  # 密钥使用计数器（原始指针位置）
+        self.key_usage_counter = 0  # 密钥使用计数器
 
-        # 有效密钥跟踪
-        self.current_batch_valid_keys = []  # 当前预检批次中的有效密钥位置列表
-        self.current_batch_valid_count = 0  # 当前批次中有效密钥的总数
-        self.valid_keys_trigger_threshold = 0  # 触发下一次预检需要经过的有效密钥数量
-        self.valid_keys_passed_count = 0  # 已经经过的有效密钥数量
+        # 简化的有效密钥跟踪
+        self.current_batch_valid_keys = []  # 当前批次有效密钥位置列表
+        self.current_batch_valid_count = 0  # 当前批次有效密钥总数
+        self.valid_keys_used_count = 0  # 已使用的有效密钥数量
+        self.valid_keys_trigger_threshold = 0  # 触发阈值
 
-        # 下一批次队列管理
-        self.next_batch_valid_keys = []  # 下一批次的有效密钥位置列表
-        self.next_batch_valid_count = 0  # 下一批次中有效密钥的总数
-        self.next_batch_ready = False  # 下一批次是否准备就绪
-
-        # API调用统计缓存
+        # API调用统计（简化）
         self.last_minute_calls = 0  # 上一分钟的调用次数
         self.stats_update_time = datetime.now()  # 统计更新时间
 
-        # 检查是否应该启用预检
-        if self._should_enable_precheck():
-            logger.info(f"Precheck enabled: count={self.precheck_count}, trigger_ratio={self.precheck_trigger_ratio}, min_keys_required={self.precheck_min_keys_multiplier * self.precheck_estimated_concurrent}")
-            logger.info(f"Initial batch state: valid_count={self.current_batch_valid_count}, trigger_threshold={self.valid_keys_trigger_threshold}")
-        else:
-            self.precheck_enabled = False
-            logger.info(f"Precheck disabled: insufficient keys ({len(self.api_keys)}) for estimated concurrent requests ({self.precheck_estimated_concurrent})")
-
-        # 执行初始预检
-        if self.precheck_enabled and self.api_keys:
-            logger.info("Scheduling initial precheck...")
+        # 简化的启用条件：只要有密钥就启用
+        if self.precheck_enabled and len(self.api_keys) > 0:
+            logger.info(f"Simplified precheck enabled: count={self.precheck_count}, trigger_ratio={self.precheck_trigger_ratio}")
+            # 执行初始预检
             asyncio.create_task(self._perform_initial_precheck())
+        else:
+            logger.info(f"Precheck disabled: enabled={self.precheck_enabled}, keys_count={len(self.api_keys)}")
 
     async def get_paid_key(self) -> str:
         return self.paid_key
@@ -597,28 +578,38 @@ class KeyManager:
         return len(self.api_keys) >= min_required_keys
 
     async def _check_precheck_trigger_for_valid_key(self):
-        """检查是否需要触发预检（仅在使用有效密钥时调用）"""
+        """简化的预检触发检查"""
         if not self.precheck_enabled:
             return
 
-        # 首先检查是否需要切换批次
-        if self._check_and_switch_batch():
-            logger.info("Switched to new precheck batch")
+        # 如果当前批次为空，立即触发预检建立初始批次
+        if self.current_batch_valid_count == 0:
+            logger.info("No valid batch established, triggering immediate precheck")
+            asyncio.create_task(self._perform_precheck_async())
+            return
 
         # 检查当前指针位置是否是有效密钥位置
         current_absolute_position = (self.key_usage_counter - 1) % len(self.api_keys)  # -1因为counter已经递增
 
         # 检查当前位置是否在当前批次的有效密钥列表中
         if current_absolute_position in self.current_batch_valid_keys:
-            self.valid_keys_passed_count += 1
-            logger.debug(f"Used valid key at position {current_absolute_position}, count: {self.valid_keys_passed_count}/{self.valid_keys_trigger_threshold}")
+            self.valid_keys_used_count += 1
+            logger.info(f"Used valid key at position {current_absolute_position}, used_count: {self.valid_keys_used_count}/{self.valid_keys_trigger_threshold}")
 
-            # 检查是否达到触发阈值（且当前没有预检在进行）
-            if (self.valid_keys_passed_count >= self.valid_keys_trigger_threshold and
+            # 简化的触发条件：达到阈值就触发
+            if (self.valid_keys_used_count >= self.valid_keys_trigger_threshold and
                 not self.precheck_in_progress):
-                logger.info(f"Precheck triggered: used {self.valid_keys_passed_count} valid keys out of {self.current_batch_valid_count} total valid keys (threshold: {self.valid_keys_trigger_threshold})")
-                logger.info(f"Continuing to use remaining {self.current_batch_valid_count - self.valid_keys_passed_count} valid keys while precheck runs in background")
-                # 在后台异步执行预检，不阻塞当前请求，也不立即重置状态
+                logger.info(f"Precheck triggered: used {self.valid_keys_used_count} valid keys (threshold: {self.valid_keys_trigger_threshold})")
+                # 重置计数器，开始新的周期
+                self.valid_keys_used_count = 0
+                asyncio.create_task(self._perform_precheck_async())
+        else:
+            logger.debug(f"Key at position {current_absolute_position} not in current valid batch")
+
+            # 如果使用的key不在有效批次中，且已经用完了有效批次，触发紧急预检
+            if self.valid_keys_used_count >= self.current_batch_valid_count and not self.precheck_in_progress:
+                logger.warning(f"Using key outside valid batch, triggering emergency precheck")
+                self.valid_keys_used_count = 0
                 asyncio.create_task(self._perform_precheck_async())
 
     async def _update_api_call_stats(self):
@@ -642,24 +633,9 @@ class KeyManager:
             logger.error(f"Failed to update API call stats: {e}")
 
     async def _adjust_precheck_parameters(self):
-        """基于API调用统计动态调整预检参数"""
-        if not self.precheck_enabled or self.last_minute_calls <= 0:
-            return
-
-        # 计算建议的预检数量（基于每分钟调用数 + 安全缓冲）
-        suggested_precheck_count = int(self.last_minute_calls * self.precheck_safety_buffer_ratio)
-
-        # 限制在合理范围内
-        min_precheck = max(10, self.last_minute_calls)
-        max_precheck = min(1000, len(self.api_keys) // 2)
-        suggested_precheck_count = max(min_precheck, min(suggested_precheck_count, max_precheck))
-
-        # 如果建议值与当前值差异较大，则调整
-        if abs(suggested_precheck_count - self.precheck_current_batch_size) > self.precheck_current_batch_size * 0.2:
-            old_size = self.precheck_current_batch_size
-            self.precheck_current_batch_size = suggested_precheck_count
-            self._calculate_precheck_trigger()
-            logger.info(f"Adjusted precheck batch size: {old_size} -> {self.precheck_current_batch_size} (based on {self.last_minute_calls} calls/min)")
+        """简化的参数调整（移除复杂的动态调整逻辑）"""
+        # 简化：不再进行复杂的动态调整，保持配置的预检数量
+        pass
 
     def _calculate_precheck_trigger(self):
         """计算预检触发阈值（基于有效密钥数量）"""
@@ -673,20 +649,10 @@ class KeyManager:
             logger.debug("No valid keys in current batch, trigger threshold set to 0")
             return
 
-        # 基于有效密钥数量计算触发阈值
-        self.valid_keys_trigger_threshold = int(self.current_batch_valid_count * self.precheck_trigger_ratio)
+        # 简化计算：直接基于有效密钥数量和触发比例
+        self.valid_keys_trigger_threshold = max(1, int(self.current_batch_valid_count * self.precheck_trigger_ratio))
 
-        # 确保至少保留最小比例的有效密钥
-        min_reserve = int(self.current_batch_valid_count * self.precheck_min_reserve_ratio)
-        if self.valid_keys_trigger_threshold > self.current_batch_valid_count - min_reserve:
-            self.valid_keys_trigger_threshold = self.current_batch_valid_count - min_reserve
-
-        # 确保触发阈值至少为1（如果有有效密钥的话）
-        self.valid_keys_trigger_threshold = max(1, self.valid_keys_trigger_threshold)
-
-        logger.debug(f"Calculated trigger threshold: {self.valid_keys_trigger_threshold} (valid_count={self.current_batch_valid_count}, ratio={self.precheck_trigger_ratio}, min_reserve={min_reserve})")
-
-        logger.debug(f"Precheck trigger calculated: valid_keys_trigger_threshold={self.valid_keys_trigger_threshold}, valid_count={self.current_batch_valid_count}, ratio={self.precheck_trigger_ratio}, reserve={min_reserve}")
+        logger.info(f"Simplified trigger threshold: {self.valid_keys_trigger_threshold} (valid_keys={self.current_batch_valid_count}, ratio={self.precheck_trigger_ratio})")
 
     async def _check_precheck_safety(self) -> bool:
         """检查预检安全性（确保剩余有效密钥足够）"""
@@ -708,27 +674,19 @@ class KeyManager:
         return True
 
     async def _perform_initial_precheck(self):
-        """执行初始预检"""
+        """简化的初始预检"""
         try:
-            logger.info("Starting initial precheck...")
+            logger.info("Starting simplified initial precheck...")
 
-            # 初始化预检参数
-            self.precheck_current_batch_size = self.precheck_count
-            logger.info(f"Initial precheck batch size set to: {self.precheck_current_batch_size}")
-
-            await self._update_api_call_stats()
-            logger.info(f"API call stats updated: last_minute_calls={self.last_minute_calls}")
-
-            # 执行初始预检以建立第一个批次
-            logger.info("Executing initial precheck to establish first batch...")
+            # 简化：直接执行预检，不进行复杂的参数调整
             await self._perform_precheck_async()
 
-            logger.info(f"Initial precheck completed. Batch state: valid_count={self.current_batch_valid_count}, trigger_threshold={self.valid_keys_trigger_threshold}")
+            logger.info(f"Initial precheck completed. Valid keys: {self.current_batch_valid_count}, trigger threshold: {self.valid_keys_trigger_threshold}")
         except Exception as e:
             logger.error(f"Error in initial precheck: {e}", exc_info=True)
 
     async def _perform_precheck_async(self):
-        """异步执行预检操作"""
+        """简化的异步预检执行"""
         async with self.precheck_lock:
             if self.precheck_in_progress:
                 return
@@ -736,26 +694,20 @@ class KeyManager:
             self.precheck_in_progress = True
 
         try:
-            # 更新API调用统计
-            await self._update_api_call_stats()
-
-            # 检查预检安全性
-            if not await self._check_precheck_safety():
-                logger.warning("Precheck safety check failed, triggering immediate precheck")
-
+            # 简化：直接执行预检，移除复杂的安全检查和统计更新
             await self._perform_precheck()
         finally:
             async with self.precheck_lock:
                 self.precheck_in_progress = False
 
     async def _perform_precheck(self):
-        """执行预检操作"""
+        """简化的预检执行"""
         if not self.precheck_enabled or not self.api_keys:
             return
 
         try:
-            # 确定预检数量
-            batch_size = self.precheck_current_batch_size or self.precheck_count
+            # 简化：直接使用配置的预检数量
+            batch_size = self.precheck_count
 
             # 计算预检起始位置（从上次结束位置开始）
             start_index = self.precheck_last_position
@@ -764,7 +716,7 @@ class KeyManager:
             if not keys_to_check:
                 return
 
-            logger.info(f"Starting precheck: start_index={start_index}, checking {len(keys_to_check)} keys, batch_size={batch_size}")
+            logger.info(f"Starting simplified precheck: start_index={start_index}, checking {len(keys_to_check)} keys")
 
             # 并发检查这些密钥，同时记录位置
             tasks = []
@@ -948,21 +900,21 @@ class KeyManager:
                     if response.status == 200:
                         return True
                     elif response.status == 429:
-                        # 429错误，冷冻密钥
+                        # 429错误，冷冻密钥（预检中不记录为warning，避免日志噪音）
                         if settings.ENABLE_KEY_FREEZE_ON_429:
                             await self.freeze_key(key)
-                            logger.warning(f"Key {redact_key_for_logging(key)} frozen due to 429 error during precheck")
+                            logger.info(f"Precheck: Key {redact_key_for_logging(key)} frozen due to 429 error")
                         else:
                             # 如果不启用冻结功能，则标记为无效
                             async with self.failure_count_lock:
                                 self.key_failure_counts[key] = self.MAX_FAILURES
-                                logger.warning(f"Key {redact_key_for_logging(key)} marked as invalid due to 429 error (freeze disabled)")
+                                logger.info(f"Precheck: Key {redact_key_for_logging(key)} marked as invalid due to 429 error (freeze disabled)")
                         return False
                     elif response.status in [400, 401, 403]:
-                        # 400等错误，立即标记为无效
+                        # 400等错误，立即标记为无效（预检中不记录为warning，避免日志噪音）
                         async with self.failure_count_lock:
                             self.key_failure_counts[key] = self.MAX_FAILURES
-                            logger.warning(f"Key {redact_key_for_logging(key)} marked as invalid due to {response.status} error during precheck")
+                            logger.info(f"Precheck: Key {redact_key_for_logging(key)} marked as invalid due to {response.status} error")
                         return False
                     else:
                         logger.debug(f"Key validation failed with status {response.status}: {redact_key_for_logging(key)}")
@@ -975,28 +927,51 @@ class KeyManager:
             logger.debug(f"Key validation error: {redact_key_for_logging(key)}, error: {e}")
             return False
 
-    def update_precheck_config(self, enabled: bool = None, count: int = None, trigger_ratio: float = None):
+    async def update_precheck_config(self, enabled: bool = None, count: int = None, trigger_ratio: float = None):
         """更新预检配置（简化版本，只支持核心参数）"""
+        from app.config.config import settings
+        from app.service.config.config_service import ConfigService
+
         config_changed = False
+        config_updates = {}
 
         if enabled is not None and enabled != self.precheck_enabled:
             self.precheck_enabled = enabled
+            settings.KEY_PRECHECK_ENABLED = enabled
+            config_updates["KEY_PRECHECK_ENABLED"] = enabled
             config_changed = True
 
         if count is not None and count != self.precheck_count:
             self.precheck_count = max(10, count)  # 最小为10
+            settings.KEY_PRECHECK_COUNT = self.precheck_count
+            config_updates["KEY_PRECHECK_COUNT"] = self.precheck_count
             config_changed = True
 
         if trigger_ratio is not None and trigger_ratio != self.precheck_trigger_ratio:
             self.precheck_trigger_ratio = max(0.1, min(1.0, trigger_ratio))  # 限制在0.1-1.0之间
+            settings.KEY_PRECHECK_TRIGGER_RATIO = self.precheck_trigger_ratio
+            config_updates["KEY_PRECHECK_TRIGGER_RATIO"] = self.precheck_trigger_ratio
             config_changed = True
 
         if config_changed:
             logger.info(f"Precheck config updated: enabled={self.precheck_enabled}, count={self.precheck_count}, trigger_ratio={self.precheck_trigger_ratio}, dynamic={self.precheck_dynamic_adjustment}")
 
+            # 保存配置到数据库
+            try:
+                await ConfigService.update_config(config_updates)
+                logger.info(f"Precheck config saved to database: {config_updates}")
+            except Exception as e:
+                logger.error(f"Failed to save precheck config to database: {str(e)}")
+
             # 重新检查是否应该启用预检
             if self.precheck_enabled and not self._should_enable_precheck():
                 self.precheck_enabled = False
+                settings.KEY_PRECHECK_ENABLED = False
+                # 更新数据库中的启用状态
+                try:
+                    await ConfigService.update_config({"KEY_PRECHECK_ENABLED": False})
+                except Exception as e:
+                    logger.error(f"Failed to update precheck enabled status in database: {str(e)}")
                 logger.warning("Precheck disabled due to insufficient keys for estimated concurrent requests")
             elif self.precheck_enabled:
                 # 重新计算触发点
@@ -1005,6 +980,69 @@ class KeyManager:
                 # 如果当前没有在进行预检，立即执行一次
                 if not self.precheck_in_progress:
                     asyncio.create_task(self._perform_precheck_async())
+
+    async def manual_trigger_precheck(self) -> dict:
+        """手动触发预检操作"""
+        if not self.precheck_enabled:
+            return {
+                "success": False,
+                "message": "预检机制未启用",
+                "data": None
+            }
+
+        if self.precheck_in_progress:
+            return {
+                "success": False,
+                "message": "预检正在进行中，请稍后再试",
+                "data": None
+            }
+
+        try:
+            logger.info("Manual precheck triggered by user")
+
+            # 记录触发前的状态
+            before_state = {
+                "current_batch_valid_count": self.current_batch_valid_count,
+                "valid_keys_passed_count": self.valid_keys_passed_count,
+                "trigger_threshold": self.valid_keys_trigger_threshold
+            }
+
+            # 执行预检
+            await self._perform_precheck_async()
+
+            # 等待预检完成
+            max_wait = 30  # 最多等待30秒
+            wait_count = 0
+            while self.precheck_in_progress and wait_count < max_wait:
+                await asyncio.sleep(1)
+                wait_count += 1
+
+            # 记录触发后的状态
+            after_state = {
+                "current_batch_valid_count": self.current_batch_valid_count,
+                "valid_keys_passed_count": self.valid_keys_passed_count,
+                "trigger_threshold": self.valid_keys_trigger_threshold
+            }
+
+            logger.info(f"Manual precheck completed. Before: {before_state}, After: {after_state}")
+
+            return {
+                "success": True,
+                "message": "预检执行成功",
+                "data": {
+                    "before": before_state,
+                    "after": after_state,
+                    "execution_time": wait_count
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Manual precheck failed: {str(e)}")
+            return {
+                "success": False,
+                "message": f"预检执行失败: {str(e)}",
+                "data": None
+            }
 
 
 _singleton_instance = None

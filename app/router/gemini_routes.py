@@ -608,26 +608,20 @@ async def get_precheck_config(
     logger.info("-" * 50 + "get_precheck_config" + "-" * 50)
 
     try:
-        min_keys_required = key_manager.precheck_estimated_concurrent * key_manager.precheck_min_keys_multiplier
         config = {
             "enabled": key_manager.precheck_enabled,
             "count": key_manager.precheck_count,
             "trigger_ratio": key_manager.precheck_trigger_ratio,
-            "min_keys_multiplier": key_manager.precheck_min_keys_multiplier,
-            "estimated_concurrent": key_manager.precheck_estimated_concurrent,
-            "dynamic_adjustment": key_manager.precheck_dynamic_adjustment,
-            "safety_buffer_ratio": key_manager.precheck_safety_buffer_ratio,
-            "min_reserve_ratio": key_manager.precheck_min_reserve_ratio,
-            "min_keys_required": min_keys_required,
+            # 简化的状态信息
             "current_keys_count": len(key_manager.api_keys),
             "last_minute_calls": key_manager.last_minute_calls,
-            "current_batch_size": key_manager.precheck_current_batch_size,
+            "current_batch_size": key_manager.precheck_count,  # 简化：直接使用配置值
             "current_batch_valid_count": key_manager.current_batch_valid_count,
-            "valid_keys_passed_count": key_manager.valid_keys_passed_count,
+            "valid_keys_passed_count": key_manager.valid_keys_used_count,  # 保持前端兼容的字段名
             "valid_keys_trigger_threshold": key_manager.valid_keys_trigger_threshold,
-            "current_batch_valid_keys": key_manager.current_batch_valid_keys,
-            "next_batch_ready": key_manager.next_batch_ready,
-            "next_batch_valid_count": key_manager.next_batch_valid_count
+            "current_batch_valid_keys": key_manager.current_batch_valid_keys[:10],  # 只返回前10个位置
+            "next_batch_ready": False,  # 简化：移除下一批次概念
+            "next_batch_valid_count": 0
         }
 
         logger.info(f"Current precheck config: {config}")
@@ -657,7 +651,7 @@ async def update_precheck_config(
             return JSONResponse({"success": False, "message": "触发比例必须在0.1-1.0之间"}, status_code=400)
 
         # 更新配置（只更新核心参数）
-        key_manager.update_precheck_config(
+        await key_manager.update_precheck_config(
             enabled=request.enabled,
             count=request.count,
             trigger_ratio=request.trigger_ratio
@@ -672,26 +666,20 @@ async def update_precheck_config(
             settings.KEY_PRECHECK_TRIGGER_RATIO = request.trigger_ratio
 
         # 返回更新后的配置
-        min_keys_required = key_manager.precheck_estimated_concurrent * key_manager.precheck_min_keys_multiplier
         updated_config = {
             "enabled": key_manager.precheck_enabled,
             "count": key_manager.precheck_count,
             "trigger_ratio": key_manager.precheck_trigger_ratio,
-            "min_keys_multiplier": key_manager.precheck_min_keys_multiplier,
-            "estimated_concurrent": key_manager.precheck_estimated_concurrent,
-            "dynamic_adjustment": key_manager.precheck_dynamic_adjustment,
-            "safety_buffer_ratio": key_manager.precheck_safety_buffer_ratio,
-            "min_reserve_ratio": key_manager.precheck_min_reserve_ratio,
-            "min_keys_required": min_keys_required,
+            # 简化的状态信息
             "current_keys_count": len(key_manager.api_keys),
             "last_minute_calls": key_manager.last_minute_calls,
-            "current_batch_size": key_manager.precheck_current_batch_size,
+            "current_batch_size": key_manager.precheck_count,  # 简化：直接使用配置值
             "current_batch_valid_count": key_manager.current_batch_valid_count,
-            "valid_keys_passed_count": key_manager.valid_keys_passed_count,
+            "valid_keys_passed_count": key_manager.valid_keys_used_count,  # 保持前端兼容的字段名
             "valid_keys_trigger_threshold": key_manager.valid_keys_trigger_threshold,
-            "current_batch_valid_keys": key_manager.current_batch_valid_keys,
-            "next_batch_ready": key_manager.next_batch_ready,
-            "next_batch_valid_count": key_manager.next_batch_valid_count
+            "current_batch_valid_keys": key_manager.current_batch_valid_keys[:10],  # 只返回前10个位置
+            "next_batch_ready": False,  # 简化：移除下一批次概念
+            "next_batch_valid_count": 0
         }
 
         logger.info(f"Precheck config updated: {updated_config}")
@@ -703,6 +691,38 @@ async def update_precheck_config(
     except Exception as e:
         logger.error(f"Failed to update precheck config: {str(e)}")
         return JSONResponse({"success": False, "message": f"更新预检配置失败: {str(e)}"}, status_code=500)
+
+
+@router.post("/manual-precheck")
+async def manual_trigger_precheck(
+    key_manager: KeyManager = Depends(get_key_manager)
+):
+    """手动触发预检操作"""
+    logger.info("-" * 50 + "manual_trigger_precheck" + "-" * 50)
+
+    try:
+        result = await key_manager.manual_trigger_precheck()
+
+        if result["success"]:
+            logger.info(f"Manual precheck completed successfully: {result['data']}")
+            return JSONResponse({
+                "success": True,
+                "message": result["message"],
+                "data": result["data"]
+            })
+        else:
+            logger.warning(f"Manual precheck failed: {result['message']}")
+            return JSONResponse({
+                "success": False,
+                "message": result["message"]
+            }, status_code=400)
+
+    except Exception as e:
+        logger.error(f"Failed to trigger manual precheck: {str(e)}")
+        return JSONResponse({
+            "success": False,
+            "message": f"手动预检失败: {str(e)}"
+        }, status_code=500)
 
 
 @router.post("/batch-operation-keys")
