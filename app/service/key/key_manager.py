@@ -50,11 +50,28 @@ class KeyManager:
         self.precheck_last_position = 0  # 上次预检的结束位置
         self.key_usage_counter = 0  # 密钥使用计数器
 
-        # 简化的有效密钥跟踪
-        self.current_batch_valid_keys = []  # 当前批次有效密钥位置列表
-        self.current_batch_valid_count = 0  # 当前批次有效密钥总数
+        # 双缓冲有效密钥管理（按照用户期望重新设计）
+        self.current_valid_keys = []  # 当前批次的有效密钥列表（存储实际密钥）
+        self.current_valid_index = 0  # 当前批次中的指针位置
+        self.current_valid_count = 0  # 当前批次有效密钥总数
+
+        self.next_valid_keys = []  # 下一批次的有效密钥列表（存储实际密钥）
+        self.next_valid_count = 0  # 下一批次有效密钥总数
+        self.next_batch_ready = False  # 下一批次是否准备就绪
+
+        # 触发控制
         self.valid_keys_used_count = 0  # 已使用的有效密钥数量
         self.valid_keys_trigger_threshold = 0  # 触发阈值
+
+        # 兼容性字段（用于API返回）
+        self.current_batch_valid_keys = []  # 兼容旧API
+        self.current_batch_valid_count = 0  # 兼容旧API
+
+        # 保持兼容性的下一批次属性（简化版本）
+        self.next_batch_valid_keys = []  # 下一批次有效密钥位置列表
+        self.next_batch_valid_count = 0  # 下一批次有效密钥总数
+        self.next_batch_ready = False  # 下一批次是否准备就绪
+        self.precheck_base_position = 0  # 当前预检批次的起始位置
 
         # API调用统计（简化）
         self.last_minute_calls = 0  # 上一分钟的调用次数
@@ -152,20 +169,96 @@ class KeyManager:
             return False
 
     async def get_next_working_key(self) -> str:
-        """获取下一可用的API key"""
+        """获取下一可用的API key（按照用户期望：直接从有效密钥列表中获取）"""
+        if not self.precheck_enabled:
+            # 如果预检未启用，使用原来的逻辑
+            return await self._get_next_working_key_legacy()
+
+        # 如果当前批次为空，立即触发预检建立初始批次
+        if not self.current_valid_keys:
+            logger.info("No valid keys available, triggering immediate precheck")
+            await self._perform_precheck_async()
+            # 等待预检完成
+            await self._wait_for_precheck_completion()
+
+            # 如果预检后仍然没有有效密钥，回退到传统方式
+            if not self.current_valid_keys:
+                logger.warning("No valid keys found after precheck, falling back to legacy method")
+                return await self._get_next_working_key_legacy()
+
+        # 从当前有效密钥列表中获取下一个密钥
+        current_key = self.current_valid_keys[self.current_valid_index]
+
+        # 移动指针到下一个位置
+        self.current_valid_index += 1
+        self.valid_keys_used_count += 1
+
+        logger.info(f"Using valid key {self.current_valid_index}/{len(self.current_valid_keys)}, used_count: {self.valid_keys_used_count}/{self.valid_keys_trigger_threshold}")
+
+        # 检查是否需要触发下一次预检
+        if (self.valid_keys_used_count >= self.valid_keys_trigger_threshold and
+            not self.precheck_in_progress):
+            logger.info(f"Trigger threshold reached ({self.valid_keys_used_count}/{self.valid_keys_trigger_threshold}), starting background precheck")
+            asyncio.create_task(self._perform_precheck_async())
+
+        # 检查是否需要切换到下一批次
+        if self.current_valid_index >= len(self.current_valid_keys):
+            await self._switch_to_next_batch()
+
+        return current_key
+
+    async def _get_next_working_key_legacy(self) -> str:
+        """传统的获取有效密钥方式（兜底方案）"""
         initial_key = await self.get_next_key()
         current_key = initial_key
 
         while True:
             if await self.is_key_valid(current_key):
-                # 只有在找到有效密钥时才进行预检触发检查
-                if self.precheck_enabled:
-                    await self._check_precheck_trigger_for_valid_key()
                 return current_key
 
             current_key = await self.get_next_key()
             if current_key == initial_key:
                 return current_key
+
+    async def _wait_for_precheck_completion(self, max_wait_seconds: int = 30):
+        """等待预检完成"""
+        wait_count = 0
+        while self.precheck_in_progress and wait_count < max_wait_seconds:
+            await asyncio.sleep(1)
+            wait_count += 1
+
+        if wait_count >= max_wait_seconds:
+            logger.warning(f"Precheck did not complete within {max_wait_seconds} seconds")
+
+    async def _switch_to_next_batch(self):
+        """切换到下一批次的有效密钥"""
+        if self.next_batch_ready and self.next_valid_keys:
+            logger.info(f"Switching to next batch: {len(self.next_valid_keys)} valid keys")
+
+            # 切换批次
+            self.current_valid_keys = self.next_valid_keys.copy()
+            self.current_valid_index = 0
+            self.current_valid_count = self.next_valid_count
+            self.valid_keys_used_count = 0  # 重置使用计数
+
+            # 清空下一批次
+            self.next_valid_keys = []
+            self.next_valid_count = 0
+            self.next_batch_ready = False
+
+            # 重新计算触发阈值
+            self._calculate_precheck_trigger()
+
+            # 更新兼容性字段
+            self._update_compatibility_fields()
+
+            logger.info(f"Batch switched successfully. New trigger threshold: {self.valid_keys_trigger_threshold}")
+        else:
+            logger.warning("No next batch available, triggering emergency precheck")
+            # 重置当前批次指针到开头，继续使用当前批次
+            self.current_valid_index = 0
+            # 触发紧急预检
+            asyncio.create_task(self._perform_precheck_async())
 
     async def get_next_working_vertex_key(self) -> str:
         """获取下一可用的 Vertex Express API key"""
@@ -570,47 +663,15 @@ class KeyManager:
 
     # 预检机制相关方法
     def _should_enable_precheck(self) -> bool:
-        """检查是否应该启用预检机制"""
-        if not self.api_keys:
-            return False
-
-        min_required_keys = self.precheck_estimated_concurrent * self.precheck_min_keys_multiplier
-        return len(self.api_keys) >= min_required_keys
+        """简化的预检启用检查"""
+        # 简化：只要有密钥就启用预检
+        return len(self.api_keys) > 0
 
     async def _check_precheck_trigger_for_valid_key(self):
-        """简化的预检触发检查"""
-        if not self.precheck_enabled:
-            return
-
-        # 如果当前批次为空，立即触发预检建立初始批次
-        if self.current_batch_valid_count == 0:
-            logger.info("No valid batch established, triggering immediate precheck")
-            asyncio.create_task(self._perform_precheck_async())
-            return
-
-        # 检查当前指针位置是否是有效密钥位置
-        current_absolute_position = (self.key_usage_counter - 1) % len(self.api_keys)  # -1因为counter已经递增
-
-        # 检查当前位置是否在当前批次的有效密钥列表中
-        if current_absolute_position in self.current_batch_valid_keys:
-            self.valid_keys_used_count += 1
-            logger.info(f"Used valid key at position {current_absolute_position}, used_count: {self.valid_keys_used_count}/{self.valid_keys_trigger_threshold}")
-
-            # 简化的触发条件：达到阈值就触发
-            if (self.valid_keys_used_count >= self.valid_keys_trigger_threshold and
-                not self.precheck_in_progress):
-                logger.info(f"Precheck triggered: used {self.valid_keys_used_count} valid keys (threshold: {self.valid_keys_trigger_threshold})")
-                # 重置计数器，开始新的周期
-                self.valid_keys_used_count = 0
-                asyncio.create_task(self._perform_precheck_async())
-        else:
-            logger.debug(f"Key at position {current_absolute_position} not in current valid batch")
-
-            # 如果使用的key不在有效批次中，且已经用完了有效批次，触发紧急预检
-            if self.valid_keys_used_count >= self.current_batch_valid_count and not self.precheck_in_progress:
-                logger.warning(f"Using key outside valid batch, triggering emergency precheck")
-                self.valid_keys_used_count = 0
-                asyncio.create_task(self._perform_precheck_async())
+        """预检触发检查（已废弃，逻辑已移至get_next_working_key）"""
+        # 此方法已被新的预检机制替代，保留用于兼容性
+        # 实际的触发逻辑现在在get_next_working_key中处理
+        pass
 
     async def _update_api_call_stats(self):
         """更新API调用统计"""
@@ -624,9 +685,8 @@ class KeyManager:
                 self.last_minute_calls = stats.get('total', 0)
                 self.stats_update_time = now
 
-                # 如果启用动态调整，重新计算预检参数
-                if self.precheck_dynamic_adjustment:
-                    await self._adjust_precheck_parameters()
+                # 简化：移除动态调整逻辑
+                # 不再进行复杂的动态调整
 
                 logger.debug(f"Updated API call stats: {self.last_minute_calls} calls in last minute")
         except Exception as e:
@@ -638,21 +698,25 @@ class KeyManager:
         pass
 
     def _calculate_precheck_trigger(self):
-        """计算预检触发阈值（基于有效密钥数量）"""
+        """计算预检触发阈值（按照用户期望的逻辑）"""
         if not self.precheck_enabled:
             self.valid_keys_trigger_threshold = 0
             logger.debug("Precheck disabled, trigger threshold set to 0")
             return
 
-        if self.current_batch_valid_count == 0:
+        # 使用新的数据结构
+        valid_count = self.current_valid_count
+
+        if valid_count == 0:
             self.valid_keys_trigger_threshold = 0
             logger.debug("No valid keys in current batch, trigger threshold set to 0")
             return
 
-        # 简化计算：直接基于有效密钥数量和触发比例
-        self.valid_keys_trigger_threshold = max(1, int(self.current_batch_valid_count * self.precheck_trigger_ratio))
+        # 按照用户期望：基于有效密钥数量和触发比例计算
+        # 例如：12个有效密钥 × 0.5 = 6个（使用6个后触发下一次预检）
+        self.valid_keys_trigger_threshold = max(1, int(valid_count * self.precheck_trigger_ratio))
 
-        logger.info(f"Simplified trigger threshold: {self.valid_keys_trigger_threshold} (valid_keys={self.current_batch_valid_count}, ratio={self.precheck_trigger_ratio})")
+        logger.info(f"Trigger threshold calculated: {self.valid_keys_trigger_threshold} (valid_keys={valid_count}, ratio={self.precheck_trigger_ratio})")
 
     async def _check_precheck_safety(self) -> bool:
         """检查预检安全性（确保剩余有效密钥足够）"""
@@ -660,7 +724,7 @@ class KeyManager:
             return True
 
         # 计算剩余的有效密钥数量
-        remaining_valid_keys = self.current_batch_valid_count - self.valid_keys_passed_count
+        remaining_valid_keys = self.current_batch_valid_count - self.valid_keys_used_count
 
         # 检查剩余有效密钥数量是否足够应对当前的调用频率
         if self.last_minute_calls > 0:
@@ -701,109 +765,136 @@ class KeyManager:
                 self.precheck_in_progress = False
 
     async def _perform_precheck(self):
-        """简化的预检执行"""
+        """按照用户期望重新实现的预检执行"""
         if not self.precheck_enabled or not self.api_keys:
             return
 
         try:
-            # 简化：直接使用配置的预检数量
+            # 使用配置的预检数量
             batch_size = self.precheck_count
 
-            # 计算预检起始位置（从上次结束位置开始）
+            # 计算预检起始位置（从上次结束位置开始，确保连续性）
             start_index = self.precheck_last_position
             keys_to_check = self._get_precheck_keys(start_index, batch_size)
 
             if not keys_to_check:
+                logger.warning("No keys to check in precheck")
                 return
 
-            logger.info(f"Starting simplified precheck: start_index={start_index}, checking {len(keys_to_check)} keys")
+            logger.info(f"Starting precheck: start_index={start_index}, checking {len(keys_to_check)} keys")
 
-            # 并发检查这些密钥，同时记录位置
+            # 并发检查这些密钥
             tasks = []
-            key_positions = []
-            for i, key in enumerate(keys_to_check):
-                position = (start_index + i) % len(self.api_keys)
-                key_positions.append(position)
-                task = asyncio.create_task(self._precheck_single_key_with_position(key, position))
+            for key in keys_to_check:
+                task = asyncio.create_task(self._precheck_single_key(key))
                 tasks.append(task)
 
             # 等待所有检查完成
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # 统计结果并收集有效密钥位置
-            valid_positions = []
-            valid_count = 0
+            # 统计结果并收集有效密钥
+            valid_keys = []
             invalid_count = 0
             error_count = 0
 
             for i, result in enumerate(results):
                 if result is True:
-                    valid_count += 1
-                    valid_positions.append(key_positions[i])
+                    valid_keys.append(keys_to_check[i])
                 elif result is False:
                     invalid_count += 1
                 elif isinstance(result, Exception):
                     error_count += 1
+                    logger.error(f"Precheck task {i} failed: {result}")
 
-            logger.info(f"Precheck completed: {valid_count} valid, {invalid_count} invalid, {error_count} errors")
-            logger.info(f"Valid key positions: {valid_positions}")
+            logger.info(f"Precheck completed: {len(valid_keys)} valid, {invalid_count} invalid, {error_count} errors")
 
-            # 更新预检状态
+            # 更新预检位置（重要：确保下次从正确位置开始）
             self.precheck_last_position = (start_index + batch_size) % len(self.api_keys)
+            logger.info(f"Next precheck will start from position: {self.precheck_last_position}")
 
-            # 检查是否是初始预检（当前批次为空）
-            is_initial_precheck = self.current_batch_valid_count == 0
-
-            # 只有在这是新的预检批次时才重置状态
-            # 如果当前批次还有剩余有效密钥，则延迟状态重置
-            if is_initial_precheck or self._should_switch_to_new_batch(valid_positions, valid_count):
-                if is_initial_precheck:
-                    logger.info("Initial precheck completed, establishing first batch")
-                else:
-                    logger.info("Switching to new precheck batch")
-
-                self.precheck_base_position = self.key_usage_counter  # 更新基准位置
-
-                # 更新有效密钥跟踪信息
-                self.current_batch_valid_keys = valid_positions
-                self.current_batch_valid_count = valid_count
-                self.valid_keys_passed_count = 0  # 重置已经过的有效密钥计数
-
-                # 重新计算触发阈值
-                self._calculate_precheck_trigger()
-
-                logger.info(f"Batch established: {valid_count} valid keys at positions {valid_positions}, trigger threshold: {self.valid_keys_trigger_threshold}")
+            # 判断是否应该建立新批次或加入下一批次队列
+            if not self.current_valid_keys:
+                # 初始预检或当前批次为空，直接建立新批次
+                logger.info(f"Establishing initial batch: {len(valid_keys)} valid keys")
+                self._establish_new_batch(valid_keys)
+            elif self.next_batch_ready:
+                # 下一批次已经准备好，这次预检结果将被丢弃
+                logger.info(f"Next batch already ready, current precheck result will be discarded")
             else:
-                logger.info("Precheck completed, but continuing with current batch until exhausted")
-                # 将新的有效密钥位置添加到待用列表中
-                self._queue_next_batch_keys(valid_positions, valid_count)
-
-            # 记录预检效果
-            if valid_count > 0:
-                logger.info(f"Precheck prepared {valid_count} valid keys at positions {valid_positions}")
-                if self.current_batch_valid_count > 0:
-                    logger.info(f"Current batch: {self.valid_keys_passed_count}/{self.current_batch_valid_count} valid keys used, trigger threshold: {self.valid_keys_trigger_threshold}")
-            else:
-                logger.warning("No valid keys found in current precheck batch")
+                # 将预检结果作为下一批次
+                logger.info(f"Queuing next batch: {len(valid_keys)} valid keys")
+                self._queue_next_batch(valid_keys)
 
         except Exception as e:
             logger.error(f"Error in precheck operation: {e}")
 
+    def _establish_new_batch(self, valid_keys: list):
+        """建立新的有效密钥批次"""
+        self.current_valid_keys = valid_keys.copy()
+        self.current_valid_index = 0
+        self.current_valid_count = len(valid_keys)
+        self.valid_keys_used_count = 0
+
+        # 重新计算触发阈值
+        self._calculate_precheck_trigger()
+
+        # 更新兼容性字段
+        self._update_compatibility_fields()
+
+        logger.info(f"New batch established: {len(valid_keys)} valid keys, trigger threshold: {self.valid_keys_trigger_threshold}")
+
+    def _queue_next_batch(self, valid_keys: list):
+        """将有效密钥加入下一批次队列"""
+        self.next_valid_keys = valid_keys.copy()
+        self.next_valid_count = len(valid_keys)
+        self.next_batch_ready = True
+
+        logger.info(f"Next batch queued: {len(valid_keys)} valid keys ready for switch")
+
+    def _update_compatibility_fields(self):
+        """更新兼容性字段（用于API返回）"""
+        # 将实际密钥转换为位置索引（用于兼容旧API）
+        self.current_batch_valid_keys = []
+        for key in self.current_valid_keys:
+            try:
+                position = self.api_keys.index(key)
+                self.current_batch_valid_keys.append(position)
+            except ValueError:
+                logger.warning(f"Valid key not found in api_keys list: {key[:20]}...")
+
+        self.current_batch_valid_count = self.current_valid_count
+
+    async def _precheck_single_key(self, key: str) -> bool:
+        """预检单个密钥（简化版本）"""
+        try:
+            # 检查密钥是否已经无效、禁用或冷冻
+            if not await self.is_key_valid(key):
+                logger.debug(f"Key {key[:20]}... already invalid, skipping precheck")
+                return False
+
+            # 执行实际的API验证
+            is_valid = await self._validate_key_with_api(key)
+
+            if not is_valid:
+                logger.debug(f"Precheck detected invalid key: {key[:20]}...")
+                return False
+            else:
+                logger.debug(f"Precheck confirmed key validity: {key[:20]}...")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error in precheck single key: {e}")
+            return False
+
     def _should_switch_to_new_batch(self, new_valid_positions: List[int], new_valid_count: int) -> bool:
-        """判断是否应该切换到新的预检批次"""
+        """判断是否应该切换到新的预检批次（已废弃）"""
+        # 此方法已被新的预检机制替代，新机制直接判断当前批次是否为空
         # 如果当前批次为空（初始状态），则应该切换
-        if self.current_batch_valid_count == 0:
+        if self.current_valid_count == 0:
             logger.debug("Current batch is empty (initial state), switching to new batch")
             return True
 
-        # 如果当前批次已经用完所有有效密钥，则切换到新批次
-        if self.valid_keys_passed_count >= self.current_batch_valid_count:
-            logger.debug("Current batch exhausted, switching to new batch")
-            return True
-
-        # 如果当前批次还有剩余有效密钥，则不切换
-        remaining_valid_keys = self.current_batch_valid_count - self.valid_keys_passed_count
-        logger.debug(f"Current batch has {remaining_valid_keys} remaining valid keys, delaying batch switch")
+        # 新机制中，只有在当前批次为空时才切换，其他情况加入队列
         return False
 
     def _queue_next_batch_keys(self, valid_positions: List[int], valid_count: int):
@@ -814,28 +905,9 @@ class KeyManager:
         logger.info(f"Queued next batch: {valid_count} valid keys at positions {valid_positions}")
 
     def _check_and_switch_batch(self):
-        """检查是否需要切换到下一批次"""
-        # 如果当前批次用完且下一批次准备就绪，则切换
-        if (self.valid_keys_passed_count >= self.current_batch_valid_count and
-            self.next_batch_ready):
-
-            logger.info(f"Switching from exhausted batch to queued batch: {self.next_batch_valid_count} valid keys")
-
-            # 切换到下一批次
-            self.current_batch_valid_keys = self.next_batch_valid_keys
-            self.current_batch_valid_count = self.next_batch_valid_count
-            self.valid_keys_passed_count = 0  # 重置计数
-            self.precheck_base_position = self.key_usage_counter  # 更新基准位置
-
-            # 清空下一批次队列
-            self.next_batch_valid_keys = []
-            self.next_batch_valid_count = 0
-            self.next_batch_ready = False
-
-            # 重新计算触发阈值
-            self._calculate_precheck_trigger()
-
-            return True
+        """检查是否需要切换到下一批次（已废弃）"""
+        # 此方法已被新的预检机制替代，新机制在_switch_to_next_batch中处理
+        # 保留用于兼容性
         return False
 
     def _get_precheck_keys(self, start_index: int, count: int) -> List[str]:
@@ -954,7 +1026,7 @@ class KeyManager:
             config_changed = True
 
         if config_changed:
-            logger.info(f"Precheck config updated: enabled={self.precheck_enabled}, count={self.precheck_count}, trigger_ratio={self.precheck_trigger_ratio}, dynamic={self.precheck_dynamic_adjustment}")
+            logger.info(f"Simplified precheck config updated: enabled={self.precheck_enabled}, count={self.precheck_count}, trigger_ratio={self.precheck_trigger_ratio}")
 
             # 保存配置到数据库
             try:
@@ -972,10 +1044,9 @@ class KeyManager:
                     await ConfigService.update_config({"KEY_PRECHECK_ENABLED": False})
                 except Exception as e:
                     logger.error(f"Failed to update precheck enabled status in database: {str(e)}")
-                logger.warning("Precheck disabled due to insufficient keys for estimated concurrent requests")
+                logger.warning("Precheck disabled due to insufficient keys")
             elif self.precheck_enabled:
                 # 重新计算触发点
-                self.precheck_current_batch_size = self.precheck_count
                 self._calculate_precheck_trigger()
                 # 如果当前没有在进行预检，立即执行一次
                 if not self.precheck_in_progress:
@@ -1003,7 +1074,7 @@ class KeyManager:
             # 记录触发前的状态
             before_state = {
                 "current_batch_valid_count": self.current_batch_valid_count,
-                "valid_keys_passed_count": self.valid_keys_passed_count,
+                "valid_keys_passed_count": self.valid_keys_used_count,  # 修复字段名
                 "trigger_threshold": self.valid_keys_trigger_threshold
             }
 
@@ -1020,7 +1091,7 @@ class KeyManager:
             # 记录触发后的状态
             after_state = {
                 "current_batch_valid_count": self.current_batch_valid_count,
-                "valid_keys_passed_count": self.valid_keys_passed_count,
+                "valid_keys_passed_count": self.valid_keys_used_count,  # 修复字段名
                 "trigger_threshold": self.valid_keys_trigger_threshold
             }
 

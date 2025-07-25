@@ -608,20 +608,23 @@ async def get_precheck_config(
     logger.info("-" * 50 + "get_precheck_config" + "-" * 50)
 
     try:
+        # 确保兼容性字段是最新的
+        key_manager._update_compatibility_fields()
+
         config = {
             "enabled": key_manager.precheck_enabled,
             "count": key_manager.precheck_count,
             "trigger_ratio": key_manager.precheck_trigger_ratio,
-            # 简化的状态信息
+            # 状态信息（优先使用新字段，兼容旧字段）
             "current_keys_count": len(key_manager.api_keys),
             "last_minute_calls": key_manager.last_minute_calls,
-            "current_batch_size": key_manager.precheck_count,  # 简化：直接使用配置值
-            "current_batch_valid_count": key_manager.current_batch_valid_count,
+            "current_batch_size": key_manager.precheck_count,  # 直接使用配置值
+            "current_batch_valid_count": key_manager.current_batch_valid_count,  # 兼容性字段
             "valid_keys_passed_count": key_manager.valid_keys_used_count,  # 保持前端兼容的字段名
             "valid_keys_trigger_threshold": key_manager.valid_keys_trigger_threshold,
             "current_batch_valid_keys": key_manager.current_batch_valid_keys[:10],  # 只返回前10个位置
-            "next_batch_ready": False,  # 简化：移除下一批次概念
-            "next_batch_valid_count": 0
+            "next_batch_ready": key_manager.next_batch_ready,  # 使用实际状态
+            "next_batch_valid_count": key_manager.next_valid_count  # 使用实际数据
         }
 
         logger.info(f"Current precheck config: {config}")
@@ -665,21 +668,24 @@ async def update_precheck_config(
         if request.trigger_ratio is not None:
             settings.KEY_PRECHECK_TRIGGER_RATIO = request.trigger_ratio
 
+        # 确保兼容性字段是最新的
+        key_manager._update_compatibility_fields()
+
         # 返回更新后的配置
         updated_config = {
             "enabled": key_manager.precheck_enabled,
             "count": key_manager.precheck_count,
             "trigger_ratio": key_manager.precheck_trigger_ratio,
-            # 简化的状态信息
+            # 状态信息（优先使用新字段，兼容旧字段）
             "current_keys_count": len(key_manager.api_keys),
             "last_minute_calls": key_manager.last_minute_calls,
-            "current_batch_size": key_manager.precheck_count,  # 简化：直接使用配置值
-            "current_batch_valid_count": key_manager.current_batch_valid_count,
+            "current_batch_size": key_manager.precheck_count,  # 直接使用配置值
+            "current_batch_valid_count": key_manager.current_batch_valid_count,  # 兼容性字段
             "valid_keys_passed_count": key_manager.valid_keys_used_count,  # 保持前端兼容的字段名
             "valid_keys_trigger_threshold": key_manager.valid_keys_trigger_threshold,
             "current_batch_valid_keys": key_manager.current_batch_valid_keys[:10],  # 只返回前10个位置
-            "next_batch_ready": False,  # 简化：移除下一批次概念
-            "next_batch_valid_count": 0
+            "next_batch_ready": key_manager.next_batch_ready,  # 使用实际状态
+            "next_batch_valid_count": key_manager.next_valid_count  # 使用实际数据
         }
 
         logger.info(f"Precheck config updated: {updated_config}")
