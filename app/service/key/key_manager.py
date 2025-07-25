@@ -892,11 +892,28 @@ class KeyManager:
 
     async def _perform_precheck_async(self):
         """简化的异步预检执行"""
+        logger.info("_perform_precheck_async called")
+
         async with self.precheck_lock:
             if self.precheck_in_progress:
-                return
+                logger.info("Precheck already in progress, waiting for completion...")
+                # 不要直接返回，而是等待当前预检完成
 
+        # 等待当前预检完成
+        max_wait = 30
+        wait_count = 0
+        while self.precheck_in_progress and wait_count < max_wait:
+            await asyncio.sleep(0.5)
+            wait_count += 1
+
+        if self.precheck_in_progress:
+            logger.warning("Timeout waiting for existing precheck to complete")
+            return
+
+        # 现在可以安全地开始新的预检
+        async with self.precheck_lock:
             self.precheck_in_progress = True
+            logger.info("Starting new precheck operation")
 
         try:
             # 简化：直接执行预检，移除复杂的安全检查和统计更新
@@ -904,10 +921,18 @@ class KeyManager:
         finally:
             async with self.precheck_lock:
                 self.precheck_in_progress = False
+                logger.info("Precheck operation completed")
 
     async def _perform_precheck(self):
         """按照用户期望重新实现的预检执行"""
-        if not self.precheck_enabled or not self.api_keys:
+        logger.info(f"_perform_precheck called: precheck_enabled={self.precheck_enabled}, api_keys_count={len(self.api_keys) if self.api_keys else 0}")
+
+        if not self.precheck_enabled:
+            logger.warning("Precheck is disabled, returning immediately")
+            return
+
+        if not self.api_keys:
+            logger.warning("No API keys available, returning immediately")
             return
 
         try:
@@ -922,7 +947,8 @@ class KeyManager:
             logger.info(f"Precheck starting from current key position: {current_position} (key_usage_counter: {self.key_usage_counter})")
 
             if not keys_to_check:
-                logger.warning("No keys to check in precheck")
+                logger.warning("No keys to check in precheck - _get_precheck_keys returned empty list")
+                logger.warning(f"Debug info: start_index={start_index}, batch_size={batch_size}, total_api_keys={len(self.api_keys)}")
                 return
 
             logger.info(f"Starting precheck: start_index={start_index}, checking {len(keys_to_check)} keys")
@@ -1082,7 +1108,10 @@ class KeyManager:
 
     def _get_precheck_keys(self, start_index: int, count: int) -> List[str]:
         """获取预检密钥列表（优先选择可能有效的密钥）"""
+        logger.info(f"_get_precheck_keys called: start_index={start_index}, count={count}, total_keys={len(self.api_keys) if self.api_keys else 0}")
+
         if not self.api_keys or count <= 0:
+            logger.warning(f"_get_precheck_keys early return: api_keys={bool(self.api_keys)}, count={count}")
             return []
 
         # 首先尝试获取可能有效的密钥（失败次数较少的）
@@ -1091,6 +1120,8 @@ class KeyManager:
             fail_count = self.key_failure_counts.get(key, 0)
             if fail_count < self.MAX_FAILURES:
                 potentially_valid_keys.append(key)
+
+        logger.info(f"Found {len(potentially_valid_keys)} potentially valid keys (fail_count < {self.MAX_FAILURES}) out of {len(self.api_keys)} total keys")
 
         # 如果有足够的可能有效密钥，优先使用它们
         if len(potentially_valid_keys) >= count:
@@ -1305,6 +1336,11 @@ class KeyManager:
                         reset_count += 1
                     logger.info(f"Reset failure count for {reset_count} keys to allow precheck retry")
 
+            # 测试密钥选择逻辑
+            logger.info("Testing key selection logic before precheck...")
+            test_keys = self._get_precheck_keys(0, 5)  # 测试选择5个密钥
+            logger.info(f"Test key selection result: {len(test_keys)} keys selected")
+
             # 执行预检
             await self._perform_precheck_async()
 
@@ -1314,6 +1350,11 @@ class KeyManager:
             while self.precheck_in_progress and wait_count < max_wait:
                 await asyncio.sleep(1)
                 wait_count += 1
+
+            if self.precheck_in_progress:
+                logger.warning(f"Manual precheck timeout after {max_wait} seconds")
+            else:
+                logger.info("Manual precheck completed successfully")
 
             # 更新兼容性字段
             self._update_compatibility_fields()
